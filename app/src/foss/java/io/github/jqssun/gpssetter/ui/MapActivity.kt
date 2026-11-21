@@ -261,6 +261,7 @@ class MapActivity: BaseMapActivity(), OnMapReadyCallback, MapLibreMap.OnMapClick
             showToast(getString(R.string.location_set))
         }
         binding.stopButton.setOnClickListener {
+            io.github.jqssun.gpssetter.route.RoutePlaybackService.terminate(this)
             viewModel.update(false, lat, lon)
             cancelNotification()
             showToast(getString(R.string.location_unset))

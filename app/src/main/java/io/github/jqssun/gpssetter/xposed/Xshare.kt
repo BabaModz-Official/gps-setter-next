@@ -34,7 +34,7 @@ class Xshare(private val prefs: SharedPreferences, private val open: (() -> Inpu
     fun refresh(force: Boolean = false) {
         val open = open ?: return
         val now = SystemClock.elapsedRealtime()
-        if (!force && now - lastRead < 1000) return
+        if (!force && now - lastRead < 200) return
         lastRead = now
         // keep the last good snapshot if the file is missing (app never synced) or mid-write
         runCatching { open().use { parse(it) } }.getOrNull()?.let { snapshot = it }

@@ -13,6 +13,7 @@ import android.widget.ImageView
 import android.widget.TextView
 import io.github.controlwear.virtual.joystick.android.JoystickView
 import io.github.jqssun.gpssetter.R
+import kotlinx.coroutines.*
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -26,7 +27,11 @@ class JoystickService : Service() {
     private var lat: Double = PrefManager.getLat
     private var lon: Double = PrefManager.getLng
     private var speedMultiplier: Double = 1.0 // 1.0 = Walk, 3.0 = Run, 12.0 = Drive
-    private var lastUpdateTime: Long = 0
+
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var tickerJob: Job? = null
+    @Volatile private var currentAngle: Int = 0
+    @Volatile private var currentStrength: Int = 0
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate() {
@@ -88,27 +93,16 @@ class JoystickService : Service() {
             }
         }
 
-        // Joystick Movement listener
+        // Joystick Movement listener with continuous tick on hold
         mJoystickView?.setOnMoveListener { angle, strength, _ ->
-            if (strength <= 0) return@setOnMoveListener
-            val now = System.currentTimeMillis()
-            // Throttle to max 10 Hz to prevent disk/IPC thrashing
-            if (now - lastUpdateTime < 100) return@setOnMoveListener
-            lastUpdateTime = now
-
-            val radians = Math.toRadians(angle.toDouble())
-            try {
-                val steps = (strength / 30.0) * speedMultiplier
-                val factorY: Double = sin(radians) / 100000.0 * steps
-                val currentLat = PrefManager.getLat
-                val cosLat = cos(Math.toRadians(currentLat)).coerceAtLeast(0.01)
-                val factorX: Double = cos(radians) / 100000.0 * steps / cosLat
-
-                lon = PrefManager.getLng + factorX
-                lat = currentLat + factorY
-                updateLocation(lat, lon)
-            } catch (e: Exception) {
-                e.printStackTrace()
+            currentAngle = angle
+            currentStrength = strength
+            if (strength > 0) {
+                if (tickerJob?.isActive != true) {
+                    startTicker()
+                }
+            } else {
+                stopTicker()
             }
         }
 
@@ -134,17 +128,69 @@ class JoystickService : Service() {
         wm?.addView(mJoystickContainerView, mJoystickLayoutParams)
     }
 
+    private fun startTicker() {
+        tickerJob?.cancel()
+        tickerJob = serviceScope.launch {
+            while (isActive && currentStrength > 0) {
+                stepLocation(currentAngle, currentStrength)
+                delay(100)
+            }
+        }
+    }
+
+    private fun stopTicker() {
+        tickerJob?.cancel()
+        tickerJob = null
+        currentStrength = 0
+        // Freeze at current coordinate and clear motion (speed 0, bearing -1)
+        PrefManager.update(start = true, la = lat, ln = lon)
+    }
+
+    private fun stepLocation(angle: Int, strength: Int) {
+        val radians = Math.toRadians(angle.toDouble())
+        try {
+            val steps = (strength / 35.0) * speedMultiplier
+            val factorY: Double = sin(radians) / 100000.0 * steps
+            val currentLat = PrefManager.getLat
+            val cosLat = cos(Math.toRadians(currentLat)).coerceAtLeast(0.01)
+            val factorX: Double = cos(radians) / 100000.0 * steps / cosLat
+
+            lon = PrefManager.getLng + factorX
+            lat = currentLat + factorY
+
+            val baseSpeedMps = when (speedMultiplier) {
+                1.0 -> 1.4f   // ~5 km/h walking
+                3.0 -> 4.2f   // ~15 km/h running
+                12.0 -> 16.7f // ~60 km/h driving
+                else -> (speedMultiplier * 1.4).toFloat()
+            }
+            val curSpeed = baseSpeedMps * (strength / 100f).coerceIn(0.1f, 1.0f)
+            // Convert joystick Cartesian angle to geographic Compass bearing:
+            // 90 deg (Up) -> 0 deg (North), 0 deg (Right) -> 90 deg (East), 270 deg (Down) -> 180 deg (South)
+            val bearing = ((90 - angle + 360) % 360).toFloat()
+
+            PrefManager.updateMotion(
+                la = lat,
+                ln = lon,
+                altitude = PrefManager.altitude,
+                speed = curSpeed,
+                bearing = bearing,
+                along = 0f
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         super.onDestroy()
+        stopTicker()
+        serviceScope.cancel()
         mJoystickContainerView?.let {
             wm?.removeView(it)
             mJoystickContainerView = null
         }
-    }
-
-    private fun updateLocation(newLat: Double, newLon: Double) {
-        PrefManager.update(start = PrefManager.isStarted, la = newLat, ln = newLon)
     }
 }

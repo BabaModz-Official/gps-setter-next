@@ -167,28 +167,41 @@ object LocationHook {
     // the spoofed fix; keeps timing/bearing from the real one when there is one
     private fun fakeLocation(origin: Location? = null, provider: String = LocationManager.GPS_PROVIDER): Location {
         val location = Location(origin?.provider ?: provider)
+        val nowNanos = SystemClock.elapsedRealtimeNanos()
+        val nowMs = System.currentTimeMillis()
         if (origin != null) {
-            location.time = origin.time
-            location.bearing = origin.bearing
-            location.bearingAccuracyDegrees = origin.bearingAccuracyDegrees
-            location.elapsedRealtimeNanos = origin.elapsedRealtimeNanos
-            location.verticalAccuracyMeters = origin.verticalAccuracyMeters
+            location.time = if (origin.time > 0) origin.time else nowMs
+            location.elapsedRealtimeNanos = if (origin.elapsedRealtimeNanos > 0) origin.elapsedRealtimeNanos else nowNanos
         } else {
-            val nowNanos = SystemClock.elapsedRealtimeNanos()
-            location.time = System.currentTimeMillis() - 300
-            location.elapsedRealtimeNanos = nowNanos - 300_000_000L
+            location.time = nowMs
+            location.elapsedRealtimeNanos = nowNanos
         }
         location.latitude = if (newlat == 0.0 && newlng == 0.0) 0.000001 else newlat
         location.longitude = if (newlat == 0.0 && newlng == 0.0) 0.000001 else newlng
-        // LocationResult.validate() rejects accuracy <=0 or > 1,000,000 m; keep it sane
-        location.accuracy = accuracy.coerceIn(1.0f, 10000.0f)
-        location.altitude = newAlt
-        location.speed = if (newSpeed > 0f) newSpeed else 0F
-        location.speedAccuracyMetersPerSecond = if (newSpeed > 0f) 1F else 0F
-        // route playback supplies a heading; otherwise keep the real fix's bearing (set above)
+        // Realistic GPS accuracy for navigation apps (3.0 - 15.0 m)
+        location.accuracy = accuracy.coerceIn(1.0f, 15.0f)
+        location.altitude = if (newAlt != 0.0) newAlt else 35.0
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            location.verticalAccuracyMeters = 1.5f
+        }
+        if (newSpeed > 0f) {
+            location.speed = newSpeed
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                location.speedAccuracyMetersPerSecond = 0.5f
+            }
+        } else {
+            location.speed = 0f
+        }
         if (newBearing >= 0f) {
             location.bearing = newBearing
-            location.bearingAccuracyDegrees = 1F
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                location.bearingAccuracyDegrees = 1.0f
+            }
+        } else if (origin != null && origin.hasBearing()) {
+            location.bearing = origin.bearing
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && origin.hasBearingAccuracy()) {
+                location.bearingAccuracyDegrees = origin.bearingAccuracyDegrees
+            }
         }
         try {
             HiddenApiBypass.invoke(location.javaClass, location, "setIsFromMockProvider", false)
@@ -286,8 +299,9 @@ object LocationHook {
                     if (!isActive(200)) continue
 
                     val now = SystemClock.elapsedRealtime()
-                    // If a fix was reported in the last 900ms (e.g. from real GPS), avoid duplicate bursts
-                    if (now - lastGpsReportTime < 900) continue
+                    // Deliver at 2 Hz (~450ms) when in motion for smooth navigation, 1 Hz (~900ms) when static
+                    val cadence = if (newSpeed > 0f) 450 else 900
+                    if (now - lastGpsReportTime < cadence) continue
 
                     // Never generate fake fixes during an active emergency call/SMS
                     val inEmerg = providerManagers.values.any { inEmergency(emergencyField?.get(it)) }
@@ -495,8 +509,8 @@ object LocationHook {
             val spoofed: (() -> Any)? = when (method.name) {
                 "getLatitude" -> { -> newlat }
                 "getLongitude" -> { -> newlng }
-                "getAccuracy" -> { -> accuracy }
-                "getAltitude" -> { -> newAlt }
+                "getAccuracy" -> { -> accuracy.coerceIn(1.0f, 15.0f) }
+                "getAltitude" -> { -> if (newAlt != 0.0) newAlt else 35.0 }
                 "getSpeed" -> { -> if (newSpeed > 0f) newSpeed else 0f }
                 "getBearing" -> { -> if (newBearing >= 0f) newBearing else 0f }
                 "hasAltitude" -> { -> true }

@@ -43,8 +43,12 @@ class RoutePlaybackService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_TERMINATE -> {
+                stopEverything()
+                return START_NOT_STICKY
+            }
             ACTION_STOP -> {
-                PrefManager.update(true, PrefManager.getLat, PrefManager.getLng) // freeze at current point, clear motion
+                PrefManager.update(false, PrefManager.getLat, PrefManager.getLng) // stop spoofing completely
                 stopEverything()
                 return START_NOT_STICKY
             }
@@ -132,7 +136,7 @@ class RoutePlaybackService : Service() {
                 PrefManager.updateMotion(fix.lat, fix.lng, fix.altitude, curSpeed.toFloat(), bearing, distance.toFloat())
                 notify(progress = if (total > 0) (distance / total * 100).toInt().coerceIn(0, 100) else 0)
             }
-            delay(1000)
+            delay(500)
         }
     }
 
@@ -195,6 +199,7 @@ class RoutePlaybackService : Service() {
         private const val CHANNEL = "route.playback"
         private const val NOTIF_ID = 321
         const val ACTION_STOP = "io.github.jqssun.gpssetter.route.STOP"
+        const val ACTION_TERMINATE = "io.github.jqssun.gpssetter.route.TERMINATE"
         private const val ACTION_PAUSE = "io.github.jqssun.gpssetter.route.PAUSE" // toggles
         private const val ACTION_SKIP = "io.github.jqssun.gpssetter.route.SKIP"
         private const val ACTION_SET_SPEED = "io.github.jqssun.gpssetter.route.SET_SPEED"
@@ -223,6 +228,10 @@ class RoutePlaybackService : Service() {
 
         fun stop(context: Context) {
             context.startService(Intent(context, RoutePlaybackService::class.java).setAction(ACTION_STOP))
+        }
+
+        fun terminate(context: Context) {
+            context.startService(Intent(context, RoutePlaybackService::class.java).setAction(ACTION_TERMINATE))
         }
 
         fun togglePause(context: Context) {

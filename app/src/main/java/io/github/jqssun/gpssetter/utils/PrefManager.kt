@@ -154,17 +154,15 @@ object PrefManager   {
     // route playback: move to a point with motion. start=true; mirror listener syncs to the hook.
     // [along] = metres along the route, for the Routes tab's progress (app-only, not mirrored)
     fun updateMotion(la: Double, ln: Double, altitude: Double, speed: Float, bearing: Float, along: Float) {
-        runInBackground {
-            pref.edit()
-                .putLong(LATITUDE_D, la.toRawBits())
-                .putLong(LONGITUDE_D, ln.toRawBits())
-                .putBoolean(START, true)
-                .putLong(ALTITUDE, altitude.toRawBits())
-                .putFloat(SPEED, speed)
-                .putFloat(BEARING, bearing)
-                .putFloat(ROUTE_ALONG, along)
-                .apply()
-        }
+        pref.edit()
+            .putLong(LATITUDE_D, la.toRawBits())
+            .putLong(LONGITUDE_D, ln.toRawBits())
+            .putBoolean(START, true)
+            .putLong(ALTITUDE, altitude.toRawBits())
+            .putFloat(SPEED, speed)
+            .putFloat(BEARING, bearing)
+            .putFloat(ROUTE_ALONG, along)
+            .apply()
     }
 
     val routeAlong: Float get() = pref.getFloat(ROUTE_ALONG, 0f)
