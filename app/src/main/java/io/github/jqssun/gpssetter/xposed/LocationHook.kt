@@ -10,6 +10,12 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.os.UserHandle
 import android.util.Log
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorEventListener2
+import android.hardware.SensorManager
+import android.os.Bundle
 import android.util.SparseArray
 import android.provider.Settings
 import android.telephony.TelephonyManager
@@ -169,12 +175,13 @@ object LocationHook {
         val location = Location(origin?.provider ?: provider)
         val nowNanos = SystemClock.elapsedRealtimeNanos()
         val nowMs = System.currentTimeMillis()
-        if (origin != null) {
-            location.time = if (origin.time > 0) origin.time else nowMs
-            location.elapsedRealtimeNanos = if (origin.elapsedRealtimeNanos > 0) origin.elapsedRealtimeNanos else nowNanos
-        } else {
-            location.time = nowMs
-            location.elapsedRealtimeNanos = nowNanos
+        // Always assign fresh timestamps so Google Play Services / Maps never treats the fix as stale
+        location.time = nowMs
+        location.elapsedRealtimeNanos = nowNanos
+        if (Build.VERSION.SDK_INT >= 34) {
+            try {
+                HiddenApiBypass.invoke(location.javaClass, location, "setElapsedRealtimeMillis", SystemClock.elapsedRealtime())
+            } catch (_: Throwable) {}
         }
         location.latitude = if (newlat == 0.0 && newlng == 0.0) 0.000001 else newlat
         location.longitude = if (newlat == 0.0 && newlng == 0.0) 0.000001 else newlng
@@ -203,10 +210,20 @@ object LocationHook {
                 location.bearingAccuracyDegrees = origin.bearingAccuracyDegrees
             }
         }
+        // GNSS satellite extras for genuine fix verification
+        val extras = Bundle().apply {
+            putInt("satellites", 14)
+            putFloat("meanCn0", 35.0f)
+            putFloat("maxCn0", 42.0f)
+        }
+        location.extras = extras
+
         try {
-            HiddenApiBypass.invoke(location.javaClass, location, "setIsFromMockProvider", false)
-        } catch (e: Exception) {
-            module.log(Log.WARN, TAG, "unable to set mock $e")
+            HiddenApiBypass.invoke(location.javaClass, location, "setMock", false)
+        } catch (_: Throwable) {
+            try {
+                HiddenApiBypass.invoke(location.javaClass, location, "setIsFromMockProvider", false)
+            } catch (_: Throwable) {}
         }
         return location
     }
@@ -323,10 +340,10 @@ object LocationHook {
                         try {
                             val fakeLoc = fakeLocation(provider = name)
                             val res = wrapLocationResult(resultClass, fakeLoc) ?: continue
-                            // ponytail: calls @GuardedBy("mMultiplexerLock") off-thread without the lock;
-                            // fine at 1 Hz, could race real traffic on the multiplexer. Acquire that
-                            // private lock reflectively if contention ever shows up.
-                            onReportLocation.invoke(manager, res)
+                            val lock = (field(manager.javaClass, "mMultiplexerLock") ?: field(manager.javaClass, "mLock"))?.get(manager) ?: manager
+                            synchronized(lock) {
+                                onReportLocation.invoke(manager, res)
+                            }
                             if (name == LocationManager.GPS_PROVIDER) deliveredGps = true
                         } catch (t: Throwable) {
                             module.log(Log.WARN, TAG, "Failed to deliver fake fix to $name", t)
@@ -516,15 +533,51 @@ object LocationHook {
                 "hasAltitude" -> { -> true }
                 "hasSpeed" -> { -> newSpeed > 0f }
                 "hasBearing" -> { -> newBearing >= 0f }
-                "getSpeedAccuracyMetersPerSecond" -> { -> 1.0f }
+                "getSpeedAccuracyMetersPerSecond" -> { -> 0.5f }
                 "getBearingAccuracyDegrees" -> { -> 1.0f }
-                "getVerticalAccuracyMeters" -> { -> 2.0f }
+                "getVerticalAccuracyMeters" -> { -> 1.5f }
+                "hasSpeedAccuracy" -> { -> newSpeed > 0f }
+                "hasBearingAccuracy" -> { -> newBearing >= 0f }
+                "hasVerticalAccuracy" -> { -> true }
+                "getTime" -> { -> System.currentTimeMillis() }
+                "getElapsedRealtimeNanos" -> { -> SystemClock.elapsedRealtimeNanos() }
+                "getElapsedRealtimeMillis" -> { -> SystemClock.elapsedRealtime() }
+                "getElapsedRealtimeAgeMillis" -> { -> 0.0 }
                 "isFromMockProvider" -> { -> false }
                 "isMock" -> { -> false }
+                "getExtras" -> { ->
+                    Bundle().apply {
+                        putInt("satellites", 14)
+                        putFloat("meanCn0", 35.0f)
+                        putFloat("maxCn0", 42.0f)
+                    }
+                }
                 else -> null
             }
             if (spoofed != null) safely(method.name) {
                 module.hook(method).intercept { chain -> if (isActive(interval)) spoofed() else chain.proceed() }
+            }
+        }
+
+        // Sensor Spoofing: Prevent Google Maps Dead-Reckoning / Activity Recognition from clamping to STILL
+        safely("SensorManager.registerListener") {
+            val smClass = SensorManager::class.java
+            for (m in smClass.declaredMethods) {
+                if (m.name == "registerListener" && m.parameterTypes.isNotEmpty() &&
+                    SensorEventListener::class.java.isAssignableFrom(m.parameterTypes[0])) {
+                    val paramCount = m.parameterTypes.size
+                    module.hook(m).intercept { chain ->
+                        val original = chain.getArg(0) as? SensorEventListener
+                        if (original != null && original !is SpoofedSensorListener) {
+                            val newArgs = Array<Any?>(paramCount) { i ->
+                                if (i == 0) SpoofedSensorListener(original) else chain.getArg(i)
+                            }
+                            chain.proceed(newArgs)
+                        } else {
+                            chain.proceed()
+                        }
+                    }
+                }
             }
         }
 
@@ -587,6 +640,39 @@ object LocationHook {
                     }
                 }
             }
+        }
+    }
+}
+
+private class SpoofedSensorListener(private val delegate: SensorEventListener) : SensorEventListener2 {
+    private val rand = Random()
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event != null && LocationHook.newlat != 0.0) {
+            when (event.sensor.type) {
+                Sensor.TYPE_ACCELEROMETER -> {
+                    // Inject realistic vehicle/movement vibration noise (~0.12 m/s²)
+                    event.values[0] += (rand.nextGaussian() * 0.08).toFloat()
+                    event.values[1] += (rand.nextGaussian() * 0.08).toFloat()
+                    event.values[2] += (rand.nextGaussian() * 0.12).toFloat()
+                }
+                Sensor.TYPE_GYROSCOPE -> {
+                    // Subtle rotational road oscillations (~0.015 rad/s)
+                    event.values[0] += (rand.nextGaussian() * 0.015).toFloat()
+                    event.values[1] += (rand.nextGaussian() * 0.015).toFloat()
+                    event.values[2] += (rand.nextGaussian() * 0.015).toFloat()
+                }
+            }
+        }
+        delegate.onSensorChanged(event)
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+        delegate.onAccuracyChanged(sensor, accuracy)
+    }
+
+    override fun onFlushCompleted(sensor: Sensor?) {
+        if (delegate is SensorEventListener2) {
+            delegate.onFlushCompleted(sensor)
         }
     }
 }
