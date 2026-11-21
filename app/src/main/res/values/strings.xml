@@ -1,8 +1,8 @@
 <resources>
 
     <!-- Home -->
-    <string name="app_name">GPS Setter</string>
-    <string name="xposed_desc">A GPS setter based on the Xposed framework.</string>
+    <string name="app_name">GPS Setter Next</string>
+    <string name="xposed_desc">A Next-Gen Stealth GPS Setter based on modern Xposed / LSPosed API.</string>
     <string name="search">Search</string>
     <string name="tab_teleport">Teleport</string>
     <string name="tab_routes">Routes</string>
@@ -145,7 +145,7 @@
 
     <!-- About -->
     <string name="about">About</string>
-    <string name="about_info">Brought to you by \n@varma322 (2026) \n@jqssun (2024-2025) \n@Android1500 (2022-2023) \n\nA GPS setter based on the Xposed framework.</string>
+    <string name="about_info">GPS Setter Next\nBrought to you by @BabaModz-Official (2026)\nForked from @varma322 (2026), @jqssun (2024-2025), @Android1500 (2022-2023)\n\nNext-Gen stealth GPS spoofer with draggable joystick, anti-detection cloaking &amp; smooth drift.</string>
 
     <!-- Update -->
     <string name="download_manager_description">Downloading update</string>

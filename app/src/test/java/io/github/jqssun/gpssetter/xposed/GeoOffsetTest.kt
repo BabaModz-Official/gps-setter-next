@@ -36,4 +36,27 @@ class GeoOffsetTest {
             assertTrue(Math.hypot(north, east) <= 10.0 + 1e-6)
         }
     }
+
+    @Test fun driftSimulatorProducesContinuousSmoothBoundedDrift() {
+        val sim = GeoOffset.DriftSimulator(maxRadiusMeters = 20.0)
+        val rng = java.util.Random(42)
+        var lastNorth = 0.0
+        var lastEast = 0.0
+
+        for (i in 0 until 50) {
+            val (dLat, dLng) = sim.tick(28.6139, 15.0, rng)
+            val north = dLat * METERS_PER_DEG
+            val east = dLng * METERS_PER_DEG * Math.cos(Math.toRadians(28.6139))
+            val dist = Math.hypot(north, east)
+            // Must stay bounded within radius
+            assertTrue("Drift must stay within target radius: $dist", dist <= 15.0 + 1e-3)
+            // Should not exhibit erratic huge leaps (must be continuous)
+            if (i > 0) {
+                val step = Math.hypot(north - lastNorth, east - lastEast)
+                assertTrue("Step must be smooth, got: $step", step < 5.0)
+            }
+            lastNorth = north
+            lastEast = east
+        }
+    }
 }

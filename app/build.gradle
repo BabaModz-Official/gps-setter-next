@@ -6,7 +6,7 @@ plugins {
     id 'com.google.devtools.ksp'
 }
 
-def tagName = '0.4.1'
+def tagName = '1.0.0'
 
 // OpenRouteService key for road routing, read from local.properties (never committed); CI injects it as a secret.
 // Empty is fine — the app falls back to keyless OSRM.
@@ -17,10 +17,10 @@ if (localPropsFile.exists()) localProps.load(new FileInputStream(localPropsFile)
 android {
     compileSdk 37 // libxposed 102 requires it; targetSdk is what changes runtime behaviour
     defaultConfig {
-        applicationId "io.github.varma322.gpssetter"
+        applicationId "io.github.babamodz.gpssetternext"
         minSdk 27
         targetSdk 34
-        versionCode 41
+        versionCode 100
         versionName tagName
         // testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "TAG_NAME", "\"${tagName}\"")

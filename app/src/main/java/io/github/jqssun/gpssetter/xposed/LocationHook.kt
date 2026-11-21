@@ -11,6 +11,9 @@ import android.os.SystemClock
 import android.os.UserHandle
 import android.util.Log
 import android.util.SparseArray
+import android.provider.Settings
+import android.telephony.TelephonyManager
+import android.net.wifi.WifiManager
 import io.github.jqssun.gpssetter.BuildConfig
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedModule
@@ -22,7 +25,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 object LocationHook {
 
-    private const val TAG = "GPS Setter"
+    private const val TAG = "GPS Setter Next"
     @Volatile var newlat: Double = 45.0000
     @Volatile var newlng: Double = 0.0000
     @Volatile private var accuracy: Float = 10.0f
@@ -31,6 +34,7 @@ object LocationHook {
     @Volatile private var newSpeed: Float = 0f
     @Volatile private var newBearing: Float = -1f
     private val rand: Random = Random()
+    private val driftSim = GeoOffset.DriftSimulator(maxRadiusMeters = 25.0)
     private lateinit var module: XposedModule
     private lateinit var settings: Xshare
     @Volatile private var mLastUpdated: Long = 0
@@ -75,10 +79,9 @@ object LocationHook {
             if (started && !now && appPackage == null) Thread(::cleanStop, "GpsSetter-CleanStop").start()
             started = now
             if (!started) return
-            // ponytail: a fresh offset on every settings read (~5 Hz system, ~12 Hz in apps), so fixes hop
-            // around inside the radius; a slow random walk would look more like real GPS drift.
+            // Smooth realistic drift (Ornstein-Uhlenbeck) instead of erratic white noise jumping
             val lat = settings.getLat
-            val (dLat, dLng) = GeoOffset.jitter(lat, settings.jitterMeters.toDouble(), rand.nextDouble(), rand.nextDouble())
+            val (dLat, dLng) = driftSim.tick(lat, settings.jitterMeters.toDouble(), rand)
             newlat = lat + dLat
             newlng = settings.getLng + dLng
             accuracy = settings.accuracy?.toFloatOrNull()?.takeIf { it > 0f } ?: 10.0f
@@ -493,6 +496,17 @@ object LocationHook {
                 "getLatitude" -> { -> newlat }
                 "getLongitude" -> { -> newlng }
                 "getAccuracy" -> { -> accuracy }
+                "getAltitude" -> { -> newAlt }
+                "getSpeed" -> { -> if (newSpeed > 0f) newSpeed else 0f }
+                "getBearing" -> { -> if (newBearing >= 0f) newBearing else 0f }
+                "hasAltitude" -> { -> true }
+                "hasSpeed" -> { -> newSpeed > 0f }
+                "hasBearing" -> { -> newBearing >= 0f }
+                "getSpeedAccuracyMetersPerSecond" -> { -> 1.0f }
+                "getBearingAccuracyDegrees" -> { -> 1.0f }
+                "getVerticalAccuracyMeters" -> { -> 2.0f }
+                "isFromMockProvider" -> { -> false }
+                "isMock" -> { -> false }
                 else -> null
             }
             if (spoofed != null) safely(method.name) {
@@ -510,6 +524,55 @@ object LocationHook {
                 .intercept { chain ->
                     if (isActive(interval)) fakeLocation(provider = chain.getArg(0) as String) else chain.proceed()
                 }
+        }
+
+        // Stealth Cloaking 1: Hide mock location flags from Settings.Secure
+        safely("Settings.Secure.getInt(mock_location)") {
+            val getIntMethod = Settings.Secure::class.java.getMethod("getInt", android.content.ContentResolver::class.java, String::class.java, Int::class.javaPrimitiveType)
+            module.hook(getIntMethod).intercept { chain ->
+                val key = chain.getArg(1) as? String
+                if (isActive(interval) && (key == "mock_location" || key == "allow_mock_location")) 0 else chain.proceed()
+            }
+        }
+
+        safely("Settings.Secure.getString(mock_location)") {
+            val getStringMethod = Settings.Secure::class.java.getMethod("getString", android.content.ContentResolver::class.java, String::class.java)
+            module.hook(getStringMethod).intercept { chain ->
+                val key = chain.getArg(1) as? String
+                if (isActive(interval) && (key == "mock_location" || key == "allow_mock_location")) "0" else chain.proceed()
+            }
+        }
+
+        // Stealth Cloaking 2: Mask Cell Tower triangulation leaks
+        safely("TelephonyManager.getAllCellInfo") {
+            for (m in TelephonyManager::class.java.declaredMethods) {
+                if (m.name == "getAllCellInfo" && m.parameterTypes.isEmpty()) {
+                    module.hook(m).intercept { chain ->
+                        if (isActive(interval)) emptyList<Any>() else chain.proceed()
+                    }
+                }
+            }
+        }
+
+        safely("TelephonyManager.getCellLocation") {
+            for (m in TelephonyManager::class.java.declaredMethods) {
+                if (m.name == "getCellLocation" && m.parameterTypes.isEmpty()) {
+                    module.hook(m).intercept { chain ->
+                        if (isActive(interval)) null else chain.proceed()
+                    }
+                }
+            }
+        }
+
+        // Stealth Cloaking 3: Mask Wi-Fi AP scan leaks (prevents Google Geolocation API BSSID lookup)
+        safely("WifiManager.getScanResults") {
+            for (m in WifiManager::class.java.declaredMethods) {
+                if (m.name == "getScanResults" && m.parameterTypes.isEmpty()) {
+                    module.hook(m).intercept { chain ->
+                        if (isActive(interval)) emptyList<Any>() else chain.proceed()
+                    }
+                }
+            }
         }
     }
 }

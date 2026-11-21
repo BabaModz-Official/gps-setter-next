@@ -24,4 +24,63 @@ object GeoOffset {
         val a = 2 * PI * v
         return latOffsetDegrees(d * cos(a)) to lngOffsetDegrees(d * sin(a), atLatDegrees)
     }
+
+    /**
+     * Smooth realistic GPS drift simulator using an Ornstein-Uhlenbeck mean-reverting process.
+     * Prevents erratic 12 Hz white noise teleporting which anti-spoofing heuristics detect,
+     * producing genuine atmospheric/multipath drift with physical momentum.
+     */
+    class DriftSimulator(private val maxRadiusMeters: Double = 10.0) {
+        private var curNorthMeters = 0.0
+        private var curEastMeters = 0.0
+        private var velNorth = 0.0
+        private var velEast = 0.0
+        private var lastTimeMs = System.currentTimeMillis()
+
+        @Synchronized
+        fun tick(atLatDegrees: Double, targetRadiusM: Double, rng: java.util.Random): Pair<Double, Double> {
+            if (targetRadiusM <= 0.0) {
+                curNorthMeters = 0.0
+                curEastMeters = 0.0
+                velNorth = 0.0
+                velEast = 0.0
+                return 0.0 to 0.0
+            }
+            val now = System.currentTimeMillis()
+            val dt = ((now - lastTimeMs).coerceIn(10L, 1000L)) / 1000.0
+            lastTimeMs = now
+
+            // Mean reversion theta: pulls drift gently toward the anchor point
+            val theta = 0.35
+            // Noise volatility sigma: physical micro-drift in m/s^(1.5)
+            val sigma = 0.40
+
+            // Ornstein-Uhlenbeck step for velocity
+            val noiseN = rng.nextGaussian() * sigma * sqrt(dt)
+            val noiseE = rng.nextGaussian() * sigma * sqrt(dt)
+
+            velNorth += (-theta * curNorthMeters * dt) + noiseN
+            velEast += (-theta * curEastMeters * dt) + noiseE
+
+            // Apply friction/drag to velocity
+            velNorth *= (1.0 - 0.25 * dt)
+            velEast *= (1.0 - 0.25 * dt)
+
+            curNorthMeters += velNorth * dt
+            curEastMeters += velEast * dt
+
+            // Clamp within target radius
+            val dist = Math.hypot(curNorthMeters, curEastMeters)
+            val maxR = targetRadiusM.coerceAtMost(maxRadiusMeters)
+            if (dist > maxR && dist > 0.0) {
+                val scale = maxR / dist
+                curNorthMeters *= scale
+                curEastMeters *= scale
+                velNorth = -velNorth * 0.5
+                velEast = -velEast * 0.5
+            }
+
+            return latOffsetDegrees(curNorthMeters) to lngOffsetDegrees(curEastMeters, atLatDegrees)
+        }
+    }
 }

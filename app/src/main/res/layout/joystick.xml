@@ -1,26 +1,91 @@
 <?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical">
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:custom="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/joystick_root"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@drawable/joystick_bg"
+    android:orientation="vertical"
+    android:padding="8dp">
 
+    <!-- Draggable Header -->
+    <LinearLayout
+        android:id="@+id/joystick_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingBottom="4dp">
+
+        <TextView
+            android:id="@+id/tv_joystick_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="GPS Next"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <ImageView
+            android:id="@+id/btn_close_joystick"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_close"
+            custom:tint="#FFAAAAAA" />
+    </LinearLayout>
+
+    <!-- Virtual Joystick -->
     <io.github.controlwear.virtual.joystick.android.JoystickView
-        xmlns:custom="http://schemas.android.com/apk/res-auto"
         android:id="@+id/joystickView_right"
-        android:layout_width="100dp"
-        android:layout_height="100dp"
-        android:layout_marginTop="20dp"
-        android:layout_marginStart="20dp"
-        android:layout_alignParentStart="true"
-        custom:JV_borderWidth="8dp"
-        custom:JV_backgroundColor="#969696"
-        custom:JV_borderColor="#686868"
-        custom:JV_buttonColor="#ff4848"
-    />
-    <!--         
-        custom:JV_backgroundColor="#009688"
-        custom:JV_borderColor="#00796B"
-        custom:JV_buttonColor="#FF6E40"
-    -->
+        android:layout_width="120dp"
+        android:layout_height="120dp"
+        android:layout_gravity="center_horizontal"
+        custom:JV_backgroundColor="#66555555"
+        custom:JV_borderColor="#88FFFFFF"
+        custom:JV_borderWidth="4dp"
+        custom:JV_buttonColor="#FF3D82F6" />
 
-</RelativeLayout>
+    <!-- Speed Mode Selectors -->
+    <LinearLayout
+        android:id="@+id/joystick_speed_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingTop="6dp">
+
+        <TextView
+            android:id="@+id/btn_speed_walk"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="6dp"
+            android:paddingVertical="2dp"
+            android:text="Walk"
+            android:textColor="#3D82F6"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btn_speed_run"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="6dp"
+            android:paddingVertical="2dp"
+            android:text="Run"
+            android:textColor="#AAAAAA"
+            android:textSize="10sp" />
+
+        <TextView
+            android:id="@+id/btn_speed_drive"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="6dp"
+            android:paddingVertical="2dp"
+            android:text="Drive"
+            android:textColor="#AAAAAA"
+            android:textSize="10sp" />
+    </LinearLayout>
+
+</LinearLayout>
