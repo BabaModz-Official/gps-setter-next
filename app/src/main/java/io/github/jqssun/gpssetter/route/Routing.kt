@@ -10,16 +10,38 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 // Road route through [stops] in order (A, any via stops, then the destination). Prefers
-// OpenRouteService (BuildConfig.ORS_KEY), falls back to keyless OSRM, and finally to straight lines
-// between the stops so the feature always works. Uses HttpURLConnection so it does
-// not depend on which OkHttp version a flavor happens to pull in.
+// OpenRouteService (BuildConfig.ORS_KEY), falls back to resilient OSRM endpoints, and finally to straight lines
+// between the stops so the feature always works. Uses HttpURLConnection with browser User-Agent
+// so public routing servers do not block mobile Dalvik requests with HTTP 403 Forbidden.
 object Routing {
 
+    private const val USER_AGENT =
+        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36 GPSSetterNext/1.0"
+
+    private val OSRM_ENDPOINTS = listOf(
+        "https://router.project-osrm.org/route/v1/driving/",
+        "https://routing.openstreetmap.de/routed-car/route/v1/driving/",
+        "https://routing.openstreetmap.de/routed-bike/route/v1/driving/",
+        "https://routing.openstreetmap.de/routed-foot/route/v1/driving/"
+    )
+
     suspend fun road(stops: List<RoutePoint>): List<RoutePoint> = withContext(Dispatchers.IO) {
+        if (stops.size < 2) return@withContext stops
+
+        // 1. Try OpenRouteService if an API key was configured
         if (BuildConfig.ORS_KEY.isNotBlank()) {
             runCatching { ors(stops) }.getOrNull()?.takeIf { it.size >= 2 }?.let { return@withContext it }
         }
-        runCatching { osrm(stops) }.getOrNull()?.takeIf { it.size >= 2 }?.let { return@withContext it }
+
+        // 2. Try OSRM endpoints with realistic road curves and turns
+        for (endpoint in OSRM_ENDPOINTS) {
+            val result = runCatching { osrm(endpoint, stops) }.getOrNull()
+            if (result != null && result.size >= 2) {
+                return@withContext result
+            }
+        }
+
+        // 3. Fallback to direct stops only if network is completely unreachable
         stops
     }
 
@@ -32,15 +54,25 @@ object Routing {
         return coordsFromGeoJson(json, "features")
     }
 
-    private fun osrm(stops: List<RoutePoint>): List<RoutePoint> = coordsFromGeoJson(get(osrmUrl(stops)), "routes")
+    private fun osrm(baseEndpoint: String, stops: List<RoutePoint>): List<RoutePoint> =
+        coordsFromGeoJson(get(osrmUrl(baseEndpoint, stops)), "routes")
 
-    // one route over every stop; OSRM takes lng,lat pairs joined by ';'
+    // default overload kept for test compatibility (RoutingTest)
     internal fun osrmUrl(stops: List<RoutePoint>): String =
-        "https://router.project-osrm.org/route/v1/driving/" +
-            stops.joinToString(";") { "${it.lng},${it.lat}" } + "?overview=full&geometries=geojson"
+        osrmUrl("https://router.project-osrm.org/route/v1/driving/", stops)
+
+    internal fun osrmUrl(baseEndpoint: String, stops: List<RoutePoint>): String =
+        baseEndpoint + stops.joinToString(";") { "${it.lng},${it.lat}" } + "?overview=full&geometries=geojson"
 
     private fun get(url: String): String = open(url, "GET").run {
-        try { inputStream.bufferedReader().use { it.readText() } } finally { disconnect() }
+        try {
+            if (responseCode !in 200..299) {
+                throw java.io.IOException("HTTP $responseCode from $url")
+            }
+            inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            disconnect()
+        }
     }
 
     private fun post(url: String, body: String, headers: Map<String, String>): String =
@@ -49,15 +81,22 @@ object Routing {
                 headers.forEach { (k, v) -> setRequestProperty(k, v) }
                 doOutput = true
                 outputStream.use { it.write(body.toByteArray()) }
+                if (responseCode !in 200..299) {
+                    throw java.io.IOException("HTTP $responseCode from $url")
+                }
                 inputStream.bufferedReader().use { it.readText() }
-            } finally { disconnect() }
+            } finally {
+                disconnect()
+            }
         }
 
     private fun open(url: String, method: String): HttpURLConnection =
         (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
-            connectTimeout = 10_000
-            readTimeout = 15_000
+            connectTimeout = 8_000
+            readTimeout = 12_000
+            setRequestProperty("User-Agent", USER_AGENT)
+            setRequestProperty("Accept", "application/json, text/plain, */*")
         }
 }
 
