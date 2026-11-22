@@ -201,14 +201,17 @@ class JoystickService : Service() {
             stopSelf()
         }
 
+        val root = mJoystickContainerView?.findViewById<View>(R.id.joystick_root)
+        val tvTitle = mJoystickContainerView?.findViewById<View>(R.id.tv_joystick_title)
+
         // Draggable floating window overlay
         var initialX = 0
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
 
-        header?.setOnTouchListener { _, event ->
-            val params = mJoystickLayoutParams ?: return@setOnTouchListener false
+        val dragListener = View.OnTouchListener { _, event ->
+            val params = mJoystickLayoutParams ?: return@OnTouchListener false
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     initialX = params.x
@@ -220,12 +223,21 @@ class JoystickService : Service() {
                 MotionEvent.ACTION_MOVE -> {
                     params.x = initialX + (event.rawX - initialTouchX).toInt()
                     params.y = initialY + (event.rawY - initialTouchY).toInt()
-                    wm?.updateViewLayout(mJoystickContainerView, params)
+                    try {
+                        wm?.updateViewLayout(mJoystickContainerView, params)
+                    } catch (e: Exception) {
+                        // View may be detached
+                    }
                     true
                 }
+                MotionEvent.ACTION_UP -> true
                 else -> false
             }
         }
+
+        header?.setOnTouchListener(dragListener)
+        tvTitle?.setOnTouchListener(dragListener)
+        root?.setOnTouchListener(dragListener)
 
         thumbstick?.onMove = { direction, deflection ->
             bearing = direction

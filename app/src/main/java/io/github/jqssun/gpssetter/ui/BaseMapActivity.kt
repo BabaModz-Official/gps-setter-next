@@ -257,11 +257,16 @@ abstract class BaseMapActivity: AppCompatActivity() {
         override fun handleOnBackPressed() { binding.bottomNav.selectedItemId = R.id.tab_teleport }
     }
 
+    private fun updateStickPanelVisibility() {
+        val isTeleportTab = binding.bottomNav.selectedItemId == R.id.tab_teleport
+        binding.teleportStickPanel.isVisible = isTeleportTab && !PrefManager.isJoystickEnabled
+    }
+
     private fun setupTabs() {
         binding.bottomNav.setOnItemSelectedListener { item ->
             val id = item.itemId
             if (id != R.id.tab_teleport) binding.teleportStick.release()
-            binding.teleportStickPanel.isVisible = id == R.id.tab_teleport
+            binding.teleportStickPanel.isVisible = (id == R.id.tab_teleport && !PrefManager.isJoystickEnabled)
             binding.screenSaved.root.isVisible = id == R.id.tab_saved
             binding.screenTargets.root.isVisible = id == R.id.tab_targets
             if (id == R.id.tab_targets) refreshTargets()
@@ -343,7 +348,15 @@ abstract class BaseMapActivity: AppCompatActivity() {
         }
 
         // start/stop can also change from the QS tile, the notification or route playback
-        PrefManager.changed.observe(this) { renderTeleport() }
+        PrefManager.changed.observe(this) {
+            updateStickPanelVisibility()
+            if (PrefManager.isStarted && (stickMovement?.isActive == true || (PrefManager.isJoystickEnabled && PrefManager.speed > 0f))) {
+                lat = PrefManager.getLat
+                lon = PrefManager.getLng
+                selectPoint(lat, lon, animate = false)
+            }
+            renderTeleport()
+        }
         renderTeleport()
     }
 
@@ -416,6 +429,7 @@ abstract class BaseMapActivity: AppCompatActivity() {
             PrefManager.isJoystickEnabled = false
             showToast("Floating Joystick disabled")
         } else {
+            stopStickMovement()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(intent)
             } else {
@@ -424,12 +438,14 @@ abstract class BaseMapActivity: AppCompatActivity() {
             PrefManager.isJoystickEnabled = true
             showToast("Floating Joystick enabled")
         }
+        updateStickPanelVisibility()
     }
 
     // Idle: "Teleport here". Live at the selected point: Stop. Live elsewhere: "Move here" + Stop.
     private fun renderTeleport() {
         val live = PrefManager.isStarted
-        val here = live && abs(PrefManager.getLat - lat) < 1e-7 && abs(PrefManager.getLng - lon) < 1e-7
+        val movingWithStick = stickMovement?.isActive == true || stickStrength > 0f || (PrefManager.isJoystickEnabled && PrefManager.speed > 0f)
+        val here = live && (movingWithStick || (abs(PrefManager.getLat - lat) < 1e-5 && abs(PrefManager.getLng - lon) < 1e-5))
         val b = binding
         b.coords.text = coordText()
         b.spoofStatus.text = getString(if (live) R.string.spoof_live else R.string.spoof_idle, PrefManager.accuracy ?: "10")
@@ -674,12 +690,14 @@ abstract class BaseMapActivity: AppCompatActivity() {
                     startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
                     return@setOnClickListener
                 }
+                stopStickMovement()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     startForegroundService(Intent(this, JoystickService::class.java))
                 } else {
                     startService(Intent(this, JoystickService::class.java))
                 }
                 PrefManager.isJoystickEnabled = true
+                updateStickPanelVisibility()
                 val launchIntent = packageManager.getLaunchIntentForPackage(target)
                 if (launchIntent != null) {
                     startActivity(launchIntent)
@@ -1218,6 +1236,7 @@ abstract class BaseMapActivity: AppCompatActivity() {
         viewModel.updateXposedState()
         applyMapType() // picks up a change made in Settings
         showStickSpeed()
+        updateStickPanelVisibility()
         startCooldownTicker()
     }
 

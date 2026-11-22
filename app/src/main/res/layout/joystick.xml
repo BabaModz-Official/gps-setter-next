@@ -2,15 +2,58 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:custom="http://schemas.android.com/apk/res-auto"
     android:id="@+id/joystick_root"
-    android:layout_width="wrap_content"
+    android:layout_width="168dp"
     android:layout_height="wrap_content"
     android:background="@drawable/joystick_bg"
     android:orientation="vertical"
     android:padding="8dp">
 
-    <!-- Draggable Header -->
+    <!-- Row 1: Dedicated Draggable Header Bar -->
     <LinearLayout
         android:id="@+id/joystick_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingBottom="2dp">
+
+        <!-- Title & Drag Handle (large touch target) -->
+        <TextView
+            android:id="@+id/tv_joystick_title"
+            android:layout_width="0dp"
+            android:layout_height="28dp"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:text="⠿ GPS Next"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <ImageView
+            android:id="@+id/btn_minimize_joystick"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:padding="4dp"
+            android:layout_marginEnd="2dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_chevron"
+            custom:tint="#FFAAAAAA"
+            android:contentDescription="Minimize" />
+
+        <ImageView
+            android:id="@+id/btn_close_joystick"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:padding="4dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_close"
+            custom:tint="#FFAAAAAA"
+            android:contentDescription="Close" />
+    </LinearLayout>
+
+    <!-- Row 2: Status & Quick Controls Bar -->
+    <LinearLayout
+        android:id="@+id/joystick_status_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
@@ -18,20 +61,10 @@
         android:paddingBottom="4dp">
 
         <TextView
-            android:id="@+id/tv_joystick_title"
+            android:id="@+id/tv_joystick_cooldown"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="GPS Next"
-            android:textColor="#FFFFFF"
-            android:textSize="11sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/tv_joystick_cooldown"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginEnd="6dp"
             android:fontFamily="monospace"
             android:textColor="#22C55E"
             android:textSize="10sp"
@@ -49,14 +82,14 @@
             android:paddingHorizontal="4dp"
             android:paddingVertical="1dp"
             android:textColor="#3D82F6"
-            android:textSize="11sp"
-            android:textStyle="bold" />
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:text="5 m/s" />
 
         <TextView
             android:id="@+id/btn_joystick_opacity"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="6dp"
             android:background="?android:attr/selectableItemBackground"
             android:fontFamily="monospace"
             android:gravity="center"
@@ -65,28 +98,12 @@
             android:textColor="#AAAAAA"
             android:textSize="10sp"
             android:text="100%" />
-
-        <ImageView
-            android:id="@+id/btn_minimize_joystick"
-            android:layout_width="18dp"
-            android:layout_height="18dp"
-            android:layout_marginEnd="6dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:src="@drawable/ic_chevron"
-            custom:tint="#FFAAAAAA" />
-
-        <ImageView
-            android:id="@+id/btn_close_joystick"
-            android:layout_width="18dp"
-            android:layout_height="18dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:src="@drawable/ic_close"
-            custom:tint="#FFAAAAAA" />
     </LinearLayout>
 
+    <!-- Row 3: Joystick Body (Collapsible) -->
     <LinearLayout
         android:id="@+id/joystick_body"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
