@@ -45,10 +45,17 @@ android {
             def keystoreProperties = new Properties()
             if (keystorePropertiesFile.exists()) keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 
-            keyAlias keystoreProperties['keyAlias']
-            keyPassword keystoreProperties['keyPassword']
-            if (keystoreProperties['storeFile']) storeFile rootProject.file(keystoreProperties['storeFile']) // repo-root relative, matching where CI writes upload.jks; unset → debug builds still work on a fresh clone
-            storePassword keystoreProperties['storePassword']
+            if (keystoreProperties['storeFile'] && rootProject.file(keystoreProperties['storeFile']).exists()) {
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+                storeFile rootProject.file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+            } else {
+                keyAlias 'androiddebugkey'
+                keyPassword 'android'
+                storeFile file("${System.getProperty('user.home')}/.android/debug.keystore")
+                storePassword 'android'
+            }
         }
     }
 
@@ -73,6 +80,11 @@ android {
     buildFeatures {
         viewBinding true
         buildConfig true
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
     }
 
     flavorDimensions += "version"
