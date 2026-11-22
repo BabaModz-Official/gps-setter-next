@@ -40,11 +40,13 @@ object PrefManager   {
     private const val DISABLE_UPDATE = "update_disabled"
     private const val ENABLE_JOYSTICK = "joystick_enabled"
     private const val ACCENT = "accent_color"
+    private const val STICK_SPEED_INDEX = "stick_speed_index"
     // motion, set during route playback; static spoofing leaves these at the defaults below
     private const val ALTITUDE = "altitude_d" // Double bits
     private const val SPEED = "speed"         // m/s
     private const val BEARING = "bearing"     // degrees, -1 = unset (use the real fix's bearing)
     private const val DISABLED_APPS = "disabled_apps" // scoped packages whose in-app hooks stand down
+    private const val SINGLE_TARGET = "single_target"
     private const val ROUTE_STATE = "route_state" // app-only, not mirrored: RoutePlaybackService.IDLE / RUNNING / PAUSED
     private const val ROUTE_ALONG = "route_along" // app-only: metres along the playing route
 
@@ -105,6 +107,7 @@ object PrefManager   {
 
     private fun syncRemote() {
         val remote = remote ?: return
+        val target = singleTarget
         remote.edit()
             .putBoolean(START, isStarted)
             .putLong(LATITUDE_D, getLat.toRawBits())
@@ -115,11 +118,14 @@ object PrefManager   {
             .putLong(ALTITUDE, altitude.toRawBits())
             .putFloat(SPEED, speed)
             .putFloat(BEARING, bearing)
+            .putString(SINGLE_TARGET, target.orEmpty())
             // a plain HashSet: the framework's process deserializes this and has no Kotlin classes
             // (emptySet() is kotlin.collections.EmptySet, and the failed commit crashed the app)
             .putStringSet(DISABLED_APPS, HashSet(disabledApps))
             .apply()
-        writeRemoteFile(remote.all)
+        val frameworkValues = remote.all
+        // Older system processes also read this file. Keep their device-wide stream off in single-app mode.
+        writeRemoteFile(if (target == null) frameworkValues else frameworkValues + (START to false))
     }
 
     // The same values as a remote file, for the system_server hook: the framework may never push
@@ -168,6 +174,10 @@ object PrefManager   {
     val routeAlong: Float get() = pref.getFloat(ROUTE_ALONG, 0f)
 
     val disabledApps: Set<String> get() = pref.getStringSet(DISABLED_APPS, null)?.toSet() ?: emptySet()
+
+    var singleTarget: String?
+        get() = pref.getString(SINGLE_TARGET, null)?.takeIf(String::isNotEmpty)
+        set(value) { pref.edit().putString(SINGLE_TARGET, value.orEmpty()).apply() }
 
     fun setAppSpoofed(pkg: String, spoofed: Boolean) {
         pref.edit().putStringSet(DISABLED_APPS, if (spoofed) disabledApps - pkg else disabledApps + pkg).apply()
@@ -240,6 +250,10 @@ object PrefManager   {
     var accentIndex: Int
         get() = pref.getInt(ACCENT, 0) // default Blue
         set(value) = pref.edit().putInt(ACCENT, value).apply()
+
+    var stickSpeedIndex: Int
+        get() = pref.getInt(STICK_SPEED_INDEX, 1)
+        set(value) = pref.edit().putInt(STICK_SPEED_INDEX, value).apply()
 
     // apply() updates memory at once and writes to disk (and the remote mirror) in the background,
     // so callers read the new state straight after; the Teleport panel relies on that

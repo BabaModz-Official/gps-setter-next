@@ -89,6 +89,7 @@ class RoutePlaybackService : Service() {
         skip = false
         speed = startSpeed.toDouble()
         variation = (intent?.getFloatExtra(EXTRA_VARIATION, 0f) ?: 0f).toDouble()
+        isPlaying = true
         PrefManager.routeState = RUNNING
         loopJob = scope.launch { run(route, mode, stops) }
         return START_NOT_STICKY
@@ -142,6 +143,7 @@ class RoutePlaybackService : Service() {
 
     private fun stopEverything() {
         loopJob?.cancel()
+        isPlaying = false
         PrefManager.routeState = IDLE
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE) else @Suppress("DEPRECATION") stopForeground(true)
         stopSelf()
@@ -150,6 +152,7 @@ class RoutePlaybackService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         scope.cancel()
+        isPlaying = false
     }
 
     // --- notification ---
@@ -195,6 +198,9 @@ class RoutePlaybackService : Service() {
         const val IDLE = 0
         const val RUNNING = 1
         const val PAUSED = 2
+
+        @Volatile var isPlaying = false
+            private set
 
         private const val CHANNEL = "route.playback"
         private const val NOTIF_ID = 321

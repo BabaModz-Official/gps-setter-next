@@ -1,6 +1,8 @@
 package io.github.jqssun.gpssetter.xposed
 
 import kotlin.math.PI
+import kotlin.math.asin
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -15,6 +17,19 @@ object GeoOffset {
 
     fun lngOffsetDegrees(metersEast: Double, atLatDegrees: Double): Double =
         Math.toDegrees(metersEast / (EARTH_RADIUS_M * cos(Math.toRadians(atLatDegrees))))
+
+    fun destination(lat: Double, lng: Double, bearing: Float, meters: Double): Pair<Double, Double> {
+        val latitude = Math.toRadians(lat)
+        val heading = Math.toRadians(bearing.toDouble())
+        val distance = meters / EARTH_RADIUS_M
+        val nextLatitude = asin((sin(latitude) * cos(distance) +
+            cos(latitude) * sin(distance) * cos(heading)).coerceIn(-1.0, 1.0))
+        val longitudeOffset = atan2(
+            sin(heading) * sin(distance) * cos(latitude),
+            cos(distance) - sin(latitude) * sin(nextLatitude)
+        )
+        return Math.toDegrees(nextLatitude) to ((lng + Math.toDegrees(longitudeOffset) + 540.0) % 360.0 - 180.0)
+    }
 
     // A uniform random point within [radiusM] of the centre, as (dLat, dLng) degrees.
     // u and v are uniform 0..1 (caller's RNG); sqrt(u) keeps the density even across the disc.

@@ -95,9 +95,9 @@
             app:iconPadding="0dp"
             app:iconSize="26dp" />
 
-        <!-- Teleport tab: D-pad nudges the selected point (and the live one while spoofing) -->
+        <!-- Teleport controls sit above the location panel. -->
         <LinearLayout
-            android:id="@+id/dpad"
+            android:id="@+id/teleport_stick_panel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_above="@id/bottom_panels"
@@ -110,18 +110,26 @@
             android:orientation="vertical"
             android:padding="4dp">
 
-            <ImageButton android:id="@+id/nudge_n" android:layout_width="44dp" android:layout_height="44dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/nudge_north" android:src="@drawable/ic_chevron" />
+            <io.github.jqssun.gpssetter.ui.ThumbstickView
+                android:id="@+id/teleport_stick"
+                android:layout_width="116dp"
+                android:layout_height="116dp"
+                android:contentDescription="@string/joystick_direction" />
 
-            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal">
-                <ImageButton android:id="@+id/nudge_w" android:layout_width="44dp" android:layout_height="44dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/nudge_west" android:rotation="-90" android:src="@drawable/ic_chevron" />
-                <TextView android:id="@+id/nudge_step" android:layout_width="44dp" android:layout_height="44dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/nudge_step_desc" android:fontFamily="monospace" android:gravity="center" android:textColor="?attr/colorPrimary" android:textSize="12sp" android:textStyle="bold" tools:text="5 m" />
-                <ImageButton android:id="@+id/nudge_e" android:layout_width="44dp" android:layout_height="44dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/nudge_east" android:rotation="90" android:src="@drawable/ic_chevron" />
-            </LinearLayout>
-
-            <ImageButton android:id="@+id/nudge_s" android:layout_width="44dp" android:layout_height="44dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/nudge_south" android:rotation="180" android:src="@drawable/ic_chevron" />
+            <TextView
+                android:id="@+id/teleport_stick_speed"
+                android:layout_width="match_parent"
+                android:layout_height="32dp"
+                android:background="?attr/selectableItemBackground"
+                android:fontFamily="monospace"
+                android:gravity="center"
+                android:textColor="?attr/colorPrimary"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                tools:text="5 m/s" />
         </LinearLayout>
 
-        <!-- one of the two panels shows, per tab; the FABs and D-pad sit above whichever it is -->
+        <!-- one of the two panels shows, per tab; the map controls sit above whichever it is -->
         <LinearLayout
             android:id="@+id/bottom_panels"
             android:layout_width="match_parent"

@@ -1,7 +1,9 @@
 package io.github.jqssun.gpssetter.xposed
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class XshareTest {
@@ -18,5 +20,17 @@ class XshareTest {
     @Test fun halfWrittenOrEmptyFileIsIgnored() {
         assertNull(parse("start=true\nlatitude_d=46256"))
         assertNull(parse(""))
+    }
+
+    @Test fun singleTargetExcludesSystemServerAndAllOtherApps() {
+        assertTrue(appliesToProcess("target.app", "target.app", setOf("target.app")))
+        assertFalse(appliesToProcess("target.app", "other.app", emptySet()))
+        assertFalse(appliesToProcess("target.app", null, emptySet()))
+    }
+
+    @Test fun defaultModeRespectsExistingScopeSwitches() {
+        assertTrue(appliesToProcess(null, null, emptySet()))
+        assertTrue(appliesToProcess(null, "target.app", setOf("other.app")))
+        assertFalse(appliesToProcess(null, "other.app", setOf("other.app")))
     }
 }

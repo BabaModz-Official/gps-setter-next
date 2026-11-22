@@ -73,9 +73,15 @@ class Xshare(private val prefs: SharedPreferences, private val open: (() -> Inpu
     val bearing: Float
     get() = s("bearing")?.toFloatOrNull() ?: prefs.getFloat("bearing", -1f)
 
+    val singleTarget: String?
+    get() = (s("single_target") ?: prefs.getString("single_target", null))?.takeIf(String::isNotEmpty)
+
     // scoped apps whose in-app hooks stand down (Targets tab). App processes only, which get pushed
     // updates, so this isn't in the system_server snapshot.
     val disabledApps: Set<String>
     get() = prefs.getStringSet("disabled_apps", null) ?: emptySet()
 
 }
+
+internal fun appliesToProcess(singleTarget: String?, appPackage: String?, disabledApps: Set<String>): Boolean =
+    if (singleTarget != null) appPackage == singleTarget else appPackage == null || appPackage !in disabledApps

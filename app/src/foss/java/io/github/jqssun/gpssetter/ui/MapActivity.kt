@@ -176,12 +176,13 @@ class MapActivity: BaseMapActivity(), OnMapReadyCallback, MapLibreMap.OnMapClick
             }
         }
     }
-    override fun selectPoint(la: Double, ln: Double) {
+    override fun selectPoint(la: Double, ln: Double, animate: Boolean) {
         if (!::mMap.isInitialized) return
         val ll = LatLng(la, ln)
         mLatLng = ll
         updateMarker(ll)
-        mMap.animateCamera(CameraUpdateFactory.newLatLng(ll))
+        val camera = CameraUpdateFactory.newLatLng(ll)
+        if (animate) mMap.animateCamera(camera) else mMap.moveCamera(camera)
         lat = la
         lon = ln
     }

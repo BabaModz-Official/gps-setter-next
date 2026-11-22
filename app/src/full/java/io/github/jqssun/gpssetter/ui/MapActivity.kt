@@ -114,12 +114,13 @@ class MapActivity: BaseMapActivity(), OnMapReadyCallback, GoogleMap.OnMapClickLi
             }
         }
     }
-    override fun selectPoint(la: Double, ln: Double) {
+    override fun selectPoint(la: Double, ln: Double, animate: Boolean) {
         if (mMarker == null) return // map not ready yet
         val ll = LatLng(la, ln)
         mLatLng = ll
         updateMarker(ll)
-        mMap.animateCamera(CameraUpdateFactory.newLatLng(ll))
+        val camera = CameraUpdateFactory.newLatLng(ll)
+        if (animate) mMap.animateCamera(camera) else mMap.moveCamera(camera)
         lat = la
         lon = ln
     }

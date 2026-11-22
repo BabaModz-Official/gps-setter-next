@@ -8,6 +8,19 @@ import org.junit.Test
 private const val METERS_PER_DEG = 111319.49
 
 class GeoOffsetTest {
+    @Test fun diagonalMovementMatchesCompassDirectionAndDistance() {
+        val (north, east) = GeoOffset.destination(0.0, 0.0, 45f, 10.0)
+        val componentDegrees = GeoOffset.latOffsetDegrees(10.0 / Math.sqrt(2.0))
+        assertEquals(componentDegrees, north, 1e-10)
+        assertEquals(componentDegrees, east, 1e-10)
+    }
+
+    @Test fun movementWrapsLongitudeAtTheAntimeridian() {
+        val (lat, lng) = GeoOffset.destination(0.0, 179.99999, 90f, 10.0)
+        assertEquals(0.0, lat, 1e-10)
+        assertTrue(lng in -180.0..-179.999)
+    }
+
     @Test fun latOffsetIsLatitudeIndependent() {
         assertEquals(1.0, GeoOffset.latOffsetDegrees(METERS_PER_DEG), 1e-4)
         assertEquals(0.0, GeoOffset.latOffsetDegrees(0.0), 1e-9)

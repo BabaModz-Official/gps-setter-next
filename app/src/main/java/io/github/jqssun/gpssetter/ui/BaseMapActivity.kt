@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -176,7 +177,7 @@ abstract class BaseMapActivity: AppCompatActivity() {
     protected abstract fun setupButtons()
     protected abstract fun moveMapToNewLocation(moveNewLocation: Boolean)
     // Make (la, ln) the selected point: marker there, camera pans (zoom kept), lat/lon set. No-op until the map is ready.
-    protected abstract fun selectPoint(la: Double, ln: Double)
+    protected abstract fun selectPoint(la: Double, ln: Double, animate: Boolean = true)
     // Applies the Settings "Map" type (PrefManager.mapType); no-op until the map is ready. Called from onMapReady and onResume (#12).
     protected abstract fun applyMapType()
 
@@ -257,6 +258,8 @@ abstract class BaseMapActivity: AppCompatActivity() {
     private fun setupTabs() {
         binding.bottomNav.setOnItemSelectedListener { item ->
             val id = item.itemId
+            if (id != R.id.tab_teleport) binding.teleportStick.release()
+            binding.teleportStickPanel.isVisible = id == R.id.tab_teleport
             binding.screenSaved.root.isVisible = id == R.id.tab_saved
             binding.screenTargets.root.isVisible = id == R.id.tab_targets
             if (id == R.id.tab_targets) refreshTargets()
@@ -286,25 +289,38 @@ abstract class BaseMapActivity: AppCompatActivity() {
         routeMode = on
         binding.routePanel.isVisible = on
         binding.teleportPanel.isVisible = !on
-        binding.dpad.isVisible = !on
         if (on) showSetup() else resetRoute()
     }
 
-    // ---- Teleport tab: telemetry, jitter, D-pad; start/stop follow the saved spoof state ----
-    private val nudgeSteps = intArrayOf(1, 5, 10)
-    private var nudgeStep = 1 // index into nudgeSteps: 5 m
+    // ---- Teleport tab ----
+    private val stickSpeeds = intArrayOf(1, 5, 10, 15, 20, 30, 50)
+    private var stickSpeedIndex: Int
+        get() = PrefManager.stickSpeedIndex.coerceIn(0, stickSpeeds.lastIndex)
+        set(value) { PrefManager.stickSpeedIndex = value }
+    private var stickHeading = 0f
+    private var stickStrength = 0f
+    private var stickMovement: Job? = null
+    private var stickLivePoint: Pair<Double, Double>? = null
+
+    private fun showStickSpeed() {
+        val speed = stickSpeeds[stickSpeedIndex]
+        binding.teleportStickSpeed.text = getString(R.string.joystick_speed_mps, speed)
+        binding.teleportStickSpeed.contentDescription = getString(R.string.joystick_speed_current, speed)
+    }
 
     private fun setupTeleport() {
         val b = binding
-        b.nudgeStep.text = getString(R.string.meters_fmt, nudgeSteps[nudgeStep])
-        b.nudgeStep.setOnClickListener {
-            nudgeStep = (nudgeStep + 1) % nudgeSteps.size
-            b.nudgeStep.text = getString(R.string.meters_fmt, nudgeSteps[nudgeStep])
+        showStickSpeed()
+        b.teleportStickSpeed.setOnClickListener {
+            stickSpeedIndex = (stickSpeedIndex + 1) % stickSpeeds.size
+            showStickSpeed()
         }
-        b.nudgeN.setOnClickListener { nudge(1.0, 0.0) }
-        b.nudgeS.setOnClickListener { nudge(-1.0, 0.0) }
-        b.nudgeE.setOnClickListener { nudge(0.0, 1.0) }
-        b.nudgeW.setOnClickListener { nudge(0.0, -1.0) }
+        b.teleportStick.onMove = { heading, strength ->
+            stickHeading = heading
+            stickStrength = strength
+            if (strength == 0f) stopStickMovement()
+            else if (stickMovement?.isActive != true) startStickMovement()
+        }
 
         // the slider only accepts multiples of its 0.5 m step
         b.jitterSlider.value = (PrefManager.jitterMeters * 2).roundToInt().coerceIn(0, 50) / 2f
@@ -331,10 +347,39 @@ abstract class BaseMapActivity: AppCompatActivity() {
         binding.jitterValue.text = if (v == 0f) getString(R.string.jitter_off) else String.format(Locale.US, "±%.1f m", v)
     }
 
-    private fun nudge(north: Double, east: Double) {
-        val m = nudgeSteps[nudgeStep]
-        selectPoint(lat + GeoOffset.latOffsetDegrees(north * m), lon + GeoOffset.lngOffsetDegrees(east * m, lat))
-        if (PrefManager.isStarted) viewModel.update(true, lat, lon) // a live spoof follows the D-pad
+    private fun startStickMovement() {
+        stickMovement = lifecycleScope.launch {
+            var lastTick = SystemClock.elapsedRealtime()
+            while (isActive) {
+                delay(100)
+                val now = SystemClock.elapsedRealtime()
+                val seconds = (now - lastTick).coerceAtMost(250L) / 1000.0
+                lastTick = now
+                val speed = stickSpeeds[stickSpeedIndex] * stickStrength
+                val point = GeoOffset.destination(lat, lon, stickHeading, speed * seconds)
+                selectPoint(point.first, point.second, animate = false)
+                if (lat == point.first && lon == point.second && PrefManager.isStarted && !RoutePlaybackService.isPlaying) {
+                    PrefManager.updateMotion(lat, lon, PrefManager.altitude, speed, stickHeading, 0f)
+                    stickLivePoint = point
+                }
+            }
+        }
+    }
+
+    private fun stopStickMovement() {
+        stickMovement?.cancel()
+        stickMovement = null
+        val point = stickLivePoint
+        stickLivePoint = null
+        if (point != null && PrefManager.isStarted && !RoutePlaybackService.isPlaying &&
+            PrefManager.getLat == point.first && PrefManager.getLng == point.second) {
+            PrefManager.updateMotion(point.first, point.second, PrefManager.altitude, 0f, -1f, 0f)
+        }
+    }
+
+    override fun onPause() {
+        binding.teleportStick.release()
+        super.onPause()
     }
 
     // Idle: "Teleport here". Live at the selected point: Stop. Live elsewhere: "Move here" + Stop.
@@ -485,6 +530,7 @@ abstract class BaseMapActivity: AppCompatActivity() {
 
     private fun setupTargets() {
         binding.screenTargets.scopeAdd.setOnClickListener { pickAppForScope() }
+        binding.screenTargets.scopeMode.setOnClickListener { chooseLocationTarget() }
         // the per-app switches depend on the system hook setting just below them
         PrefManager.changed.observe(this) { if (binding.screenTargets.root.isVisible) renderScope() }
     }
@@ -527,14 +573,21 @@ abstract class BaseMapActivity: AppCompatActivity() {
 
     private fun renderScope() {
         val t = binding.screenTargets
+        val target = PrefManager.singleTarget
         val systemWide = systemWideNow()
         val rebootPending = PrefManager.isSystemHooked != PrefManager.isSystemHookedThisBoot
-        t.scopeHint.text = if (PrefManager.service == null) getString(R.string.error_xposed_module_missing_desc) else
-            getString(if (systemWide) R.string.scope_hint_system else R.string.scope_hint_apps) +
+        t.scopeHint.text = when {
+            PrefManager.service == null -> getString(R.string.error_xposed_module_missing_desc)
+            target != null -> getString(
+                if (target in scope) R.string.scope_single_hint else R.string.scope_single_missing, scopeLabel(target)
+            )
+            else -> getString(if (systemWide) R.string.scope_hint_system else R.string.scope_hint_apps) +
                 if (rebootPending) "\n" + getString(
                     if (PrefManager.isSystemHooked) R.string.scope_hint_reboot_on else R.string.scope_hint_reboot_off
                 ) else ""
+        }
         t.scopeAdd.isEnabled = PrefManager.service != null
+        t.scopeMode.isEnabled = PrefManager.service != null || target != null
         t.scopeList.removeAllViews()
         val disabled = PrefManager.disabledApps
         for (pkg in scope) {
@@ -549,13 +602,38 @@ abstract class BaseMapActivity: AppCompatActivity() {
             )
             // while system_server spoofs every app, a per-app switch can't give one its real location
             row.findViewById<MaterialSwitch>(R.id.scope_spoof).apply {
-                isVisible = !isSystem && !systemWide
+                isVisible = !isSystem && !systemWide && target == null
                 isChecked = pkg !in disabled
                 setOnCheckedChangeListener { _, on -> PrefManager.setAppSpoofed(pkg, on) }
             }
             row.findViewById<View>(R.id.scope_remove).setOnClickListener { confirmRemoveScope(pkg, row.findViewById<TextView>(R.id.scope_label).text) }
             t.scopeList.addView(row)
         }
+    }
+
+    private fun scopeLabel(pkg: String): String = runCatching {
+        packageManager.getApplicationInfo(pkg, 0).loadLabel(packageManager).toString()
+    }.getOrDefault(pkg)
+
+    private fun chooseLocationTarget() {
+        val apps = scope.filter { it != "system" && it != "android" && it != packageName }
+            .map { pkg -> pkg to scopeLabel(pkg) }
+            .sortedBy { (_, label) -> label.lowercase() }
+        val choices = listOf(null) + apps.map { (pkg, _) -> pkg }
+        val labels = listOf(getString(R.string.scope_use_settings)) + apps.map { (_, label) -> label }
+        if (apps.isEmpty() && PrefManager.singleTarget == null) {
+            showToast(getString(R.string.scope_mode_empty))
+            return
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.scope_mode)
+            .setSingleChoiceItems(labels.toTypedArray(), choices.indexOf(PrefManager.singleTarget)) { dialog, index ->
+                PrefManager.singleTarget = choices[index]
+                dialog.dismiss()
+                renderScope()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun confirmRemoveScope(pkg: String, label: CharSequence) {
@@ -839,6 +917,34 @@ abstract class BaseMapActivity: AppCompatActivity() {
     private fun startRoutePlayback() {
         val road = roadPoints ?: return
         if (!locationOnOrAsk()) return
+        if (PrefManager.singleTarget != null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            playRoute(road)
+            return
+        }
+        lifecycleScope.launch {
+            val service = PrefManager.service
+            val systemLoaded = withContext(Dispatchers.IO) {
+                val targets = runCatching { service?.runningTargets }.getOrNull()
+                targets?.let {
+                    return@withContext it.any { target -> target.processName == "system" || target.processName == "system_server" }
+                }
+                runCatching { service?.scope?.any { it == "system" || it == "android" } }.getOrNull()
+            }
+            if (roadPoints !== road) return@launch
+            if (systemLoaded == false || !PrefManager.isSystemHookedThisBoot) {
+                MaterialAlertDialogBuilder(this@BaseMapActivity)
+                    .setTitle(R.string.route_live_title)
+                    .setMessage(R.string.route_live_system_scope)
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(R.string.route_play_anyway) { _, _ -> playRoute(road) }
+                    .show()
+            } else {
+                playRoute(road)
+            }
+        }
+    }
+
+    private fun playRoute(road: List<RoutePoint>) {
         RoutePlaybackService.start(this, road, speedKmh / 3.6f, binding.variationSlider.value / 100f, playMode, stopDistances)
         binding.travelDetails.text = stopNames.withIndex().joinToString("\n") { (i, n) -> "${'A' + i}  $n" }
         showTravel()
@@ -1008,7 +1114,7 @@ abstract class BaseMapActivity: AppCompatActivity() {
         super.onResume()
         viewModel.updateXposedState()
         applyMapType() // picks up a change made in Settings
-
+        showStickSpeed()
     }
 
     protected fun addFavoriteDialog() {

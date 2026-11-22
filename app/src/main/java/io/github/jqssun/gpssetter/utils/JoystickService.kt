@@ -8,30 +8,29 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.view.*
 import android.widget.ImageView
 import android.widget.TextView
-import io.github.controlwear.virtual.joystick.android.JoystickView
 import io.github.jqssun.gpssetter.R
+import io.github.jqssun.gpssetter.route.RoutePlaybackService
+import io.github.jqssun.gpssetter.ui.ThumbstickView
+import io.github.jqssun.gpssetter.xposed.GeoOffset
 import kotlinx.coroutines.*
-import kotlin.math.cos
-import kotlin.math.sin
 
 class JoystickService : Service() {
 
     private var wm: WindowManager? = null
     private var mJoystickContainerView: View? = null
-    private var mJoystickView: JoystickView? = null
     private var mJoystickLayoutParams: WindowManager.LayoutParams? = null
 
-    private var lat: Double = PrefManager.getLat
-    private var lon: Double = PrefManager.getLng
-    private var speedMultiplier: Double = 1.0 // 1.0 = Walk, 3.0 = Run, 12.0 = Drive
+    private var lastPoint: Pair<Double, Double>? = null
+    private var speedMps = 1.4f
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var tickerJob: Job? = null
-    @Volatile private var currentAngle: Int = 0
-    @Volatile private var currentStrength: Int = 0
+    private var bearing = 0f
+    private var strength = 0f
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate() {
@@ -40,10 +39,14 @@ class JoystickService : Service() {
         val inflater = getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
         mJoystickContainerView = inflater.inflate(R.layout.joystick, null)
 
-        mJoystickView = mJoystickContainerView?.findViewById(R.id.joystickView_right)
+        val thumbstick = mJoystickContainerView?.findViewById<ThumbstickView>(R.id.joystickView_right)
         val header = mJoystickContainerView?.findViewById<View>(R.id.joystick_header)
         val btnClose = mJoystickContainerView?.findViewById<ImageView>(R.id.btn_close_joystick)
 
+        val speeds = intArrayOf(1, 5, 10, 15, 20, 30, 50)
+        var speedIndex = PrefManager.stickSpeedIndex.coerceIn(0, speeds.lastIndex)
+
+        val tvSpeed = mJoystickContainerView?.findViewById<TextView>(R.id.tv_joystick_speed)
         val btnWalk = mJoystickContainerView?.findViewById<TextView>(R.id.btn_speed_walk)
         val btnRun = mJoystickContainerView?.findViewById<TextView>(R.id.btn_speed_run)
         val btnDrive = mJoystickContainerView?.findViewById<TextView>(R.id.btn_speed_drive)
@@ -51,16 +54,35 @@ class JoystickService : Service() {
         val activeColor = Color.parseColor("#3D82F6")
         val inactiveColor = Color.parseColor("#AAAAAA")
 
-        fun selectSpeed(mult: Double, selectedView: TextView?) {
-            speedMultiplier = mult
-            btnWalk?.setTextColor(if (selectedView == btnWalk) activeColor else inactiveColor)
-            btnRun?.setTextColor(if (selectedView == btnRun) activeColor else inactiveColor)
-            btnDrive?.setTextColor(if (selectedView == btnDrive) activeColor else inactiveColor)
+        fun updateSpeedDisplay() {
+            val spd = speeds[speedIndex]
+            speedMps = spd.toFloat()
+            PrefManager.stickSpeedIndex = speedIndex
+            tvSpeed?.text = "${spd} m/s"
+            btnWalk?.setTextColor(if (spd <= 1) activeColor else inactiveColor)
+            btnRun?.setTextColor(if (spd in 2..5) activeColor else inactiveColor)
+            btnDrive?.setTextColor(if (spd >= 15) activeColor else inactiveColor)
         }
 
-        btnWalk?.setOnClickListener { selectSpeed(1.0, btnWalk) }
-        btnRun?.setOnClickListener { selectSpeed(3.0, btnRun) }
-        btnDrive?.setOnClickListener { selectSpeed(12.0, btnDrive) }
+        updateSpeedDisplay()
+
+        tvSpeed?.setOnClickListener {
+            speedIndex = (speedIndex + 1) % speeds.size
+            updateSpeedDisplay()
+        }
+
+        btnWalk?.setOnClickListener {
+            speedIndex = 0 // 1 m/s
+            updateSpeedDisplay()
+        }
+        btnRun?.setOnClickListener {
+            speedIndex = 1 // 5 m/s
+            updateSpeedDisplay()
+        }
+        btnDrive?.setOnClickListener {
+            speedIndex = 4 // 20 m/s
+            updateSpeedDisplay()
+        }
 
         btnClose?.setOnClickListener {
             PrefManager.isJoystickEnabled = false
@@ -93,11 +115,10 @@ class JoystickService : Service() {
             }
         }
 
-        // Joystick Movement listener with continuous tick on hold
-        mJoystickView?.setOnMoveListener { angle, strength, _ ->
-            currentAngle = angle
-            currentStrength = strength
-            if (strength > 0) {
+        thumbstick?.onMove = { direction, deflection ->
+            bearing = direction
+            strength = deflection
+            if (strength > 0f) {
                 if (tickerJob?.isActive != true) {
                     startTicker()
                 }
@@ -129,11 +150,18 @@ class JoystickService : Service() {
     }
 
     private fun startTicker() {
-        tickerJob?.cancel()
         tickerJob = serviceScope.launch {
-            while (isActive && currentStrength > 0) {
-                stepLocation(currentAngle, currentStrength)
+            var lastTick = SystemClock.elapsedRealtime()
+            while (isActive && strength > 0f && !RoutePlaybackService.isPlaying) {
                 delay(100)
+                if (RoutePlaybackService.isPlaying) break
+                val now = SystemClock.elapsedRealtime()
+                val elapsedSeconds = (now - lastTick).coerceIn(0L, 250L) / 1000.0
+                lastTick = now
+                val speed = speedMps * strength
+                val point = GeoOffset.destination(PrefManager.getLat, PrefManager.getLng, bearing, speed * elapsedSeconds)
+                lastPoint = point
+                PrefManager.updateMotion(point.first, point.second, PrefManager.altitude, speed, bearing, 0f)
             }
         }
     }
@@ -141,44 +169,12 @@ class JoystickService : Service() {
     private fun stopTicker() {
         tickerJob?.cancel()
         tickerJob = null
-        currentStrength = 0
-        // Freeze at current coordinate and clear motion (speed 0, bearing -1)
-        PrefManager.update(start = true, la = lat, ln = lon)
-    }
-
-    private fun stepLocation(angle: Int, strength: Int) {
-        val radians = Math.toRadians(angle.toDouble())
-        try {
-            val steps = (strength / 35.0) * speedMultiplier
-            val factorY: Double = sin(radians) / 100000.0 * steps
-            val currentLat = PrefManager.getLat
-            val cosLat = cos(Math.toRadians(currentLat)).coerceAtLeast(0.01)
-            val factorX: Double = cos(radians) / 100000.0 * steps / cosLat
-
-            lon = PrefManager.getLng + factorX
-            lat = currentLat + factorY
-
-            val baseSpeedMps = when (speedMultiplier) {
-                1.0 -> 1.4f   // ~5 km/h walking
-                3.0 -> 4.2f   // ~15 km/h running
-                12.0 -> 16.7f // ~60 km/h driving
-                else -> (speedMultiplier * 1.4).toFloat()
-            }
-            val curSpeed = baseSpeedMps * (strength / 100f).coerceIn(0.1f, 1.0f)
-            // Convert joystick Cartesian angle to geographic Compass bearing:
-            // 90 deg (Up) -> 0 deg (North), 0 deg (Right) -> 90 deg (East), 270 deg (Down) -> 180 deg (South)
-            val bearing = ((90 - angle + 360) % 360).toFloat()
-
-            PrefManager.updateMotion(
-                la = lat,
-                ln = lon,
-                altitude = PrefManager.altitude,
-                speed = curSpeed,
-                bearing = bearing,
-                along = 0f
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
+        strength = 0f
+        val point = lastPoint
+        lastPoint = null
+        if (point != null && PrefManager.isStarted && !RoutePlaybackService.isPlaying &&
+            point.first == PrefManager.getLat && point.second == PrefManager.getLng) {
+            PrefManager.updateMotion(point.first, point.second, PrefManager.altitude, 0f, -1f, 0f)
         }
     }
 

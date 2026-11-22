@@ -6,16 +6,11 @@ import android.location.Location
 import android.location.LocationManager
 import android.location.LocationRequest
 import android.os.Build
+import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.os.UserHandle
 import android.util.Log
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorEventListener2
-import android.hardware.SensorManager
-import android.os.Bundle
 import android.util.SparseArray
 import android.provider.Settings
 import android.telephony.TelephonyManager
@@ -32,6 +27,7 @@ import java.util.concurrent.ConcurrentHashMap
 object LocationHook {
 
     private const val TAG = "GPS Setter Next"
+    private const val FRAMEWORK_FIX = "io.github.jqssun.gpssetter.FRAMEWORK_FIX"
     @Volatile var newlat: Double = 45.0000
     @Volatile var newlng: Double = 0.0000
     @Volatile private var accuracy: Float = 10.0f
@@ -51,7 +47,7 @@ object LocationHook {
     // Cached provider managers (e.g. "gps", "fused", "network") for generating fake fixes in system_server
     private val providerManagers = ConcurrentHashMap<String, Any>()
     @Volatile private var generatorStarted = false
-    @Volatile private var lastGpsReportTime: Long = 0
+    private val lastProviderReportTimes = ConcurrentHashMap<String, Long>()
     private var locationResultWrap: Method? = null
     @Volatile private var emergencyField: Field? = null // LocationProviderManager.mEmergencyHelper, Android 14+
     @Volatile private var locationToggledAt = Long.MIN_VALUE / 2 // elapsedRealtime of our last off/on switch
@@ -67,7 +63,7 @@ object LocationHook {
 
     // re-reads settings (and re-rolls the random offset) at most once per interval, so start/stop and new locations apply without a reboot
     private fun isActive(interval: Int): Boolean {
-        if (System.currentTimeMillis() - mLastUpdated > interval) {
+        if (SystemClock.elapsedRealtime() - mLastUpdated > interval) {
             updateLocation()
         }
         return started
@@ -76,10 +72,12 @@ object LocationHook {
     @Synchronized
     private fun updateLocation() {
         try {
-            mLastUpdated = System.currentTimeMillis()
+            mLastUpdated = SystemClock.elapsedRealtime()
             settings.refresh()
             // an app switched off on the Targets tab reads its real location (live; pushed to app processes)
-            val now = settings.isStarted && appPackage.let { it == null || it !in settings.disabledApps }
+            val now = settings.isStarted && appliesToProcess(
+                settings.singleTarget, appPackage, if (appPackage == null) emptySet() else settings.disabledApps
+            )
             if (now != started) module.log(Log.INFO, TAG, "Spoofing ${if (now) "on" else "off"}")
             // own thread: this can run inside a provider's locked onReportLocation, and cleanStop takes those locks
             if (started && !now && appPackage == null) Thread(::cleanStop, "GpsSetter-CleanStop").start()
@@ -147,7 +145,7 @@ object LocationHook {
     private fun clearLastLocations(manager: Any): Boolean {
         val lastLocations = field(manager.javaClass, "mLastLocations") ?: return false
         // mMultiplexerLock from Android 13, mLock on 12
-        val lock = (field(manager.javaClass, "mMultiplexerLock") ?: field(manager.javaClass, "mLock"))?.get(manager) ?: manager
+        val lock = providerLock(manager) ?: return false
         synchronized(lock) {
             val perUser = lastLocations.get(manager) as? SparseArray<*> ?: return false
             for (i in 0 until perUser.size()) {
@@ -170,19 +168,26 @@ object LocationHook {
         return null
     }
 
-    // the spoofed fix; keeps timing/bearing from the real one when there is one
-    private fun fakeLocation(origin: Location? = null, provider: String = LocationManager.GPS_PROVIDER): Location {
+    private fun providerLock(manager: Any): Any? =
+        (field(manager.javaClass, "mMultiplexerLock") ?: field(manager.javaClass, "mLock"))?.get(manager)
+
+    // Copies bearing where needed. Framework reports represent a newly sampled simulation position.
+    private fun fakeLocation(
+        origin: Location? = null,
+        provider: String = LocationManager.GPS_PROVIDER,
+        fresh: Boolean = false,
+    ): Location {
         val location = Location(origin?.provider ?: provider)
         val nowNanos = SystemClock.elapsedRealtimeNanos()
         val nowMs = System.currentTimeMillis()
-        // Always assign fresh timestamps so Google Play Services / Maps never treats the fix as stale
-        location.time = nowMs
-        location.elapsedRealtimeNanos = nowNanos
-        if (Build.VERSION.SDK_INT >= 34) {
-            try {
-                HiddenApiBypass.invoke(location.javaClass, location, "setElapsedRealtimeMillis", SystemClock.elapsedRealtime())
-            } catch (_: Throwable) {}
+        if (origin != null && !fresh) {
+            location.time = if (origin.time > 0) origin.time else nowMs
+            location.elapsedRealtimeNanos = if (origin.elapsedRealtimeNanos > 0) origin.elapsedRealtimeNanos else nowNanos
+        } else {
+            location.time = nowMs
+            location.elapsedRealtimeNanos = nowNanos
         }
+        if (fresh) location.extras = Bundle().apply { putBoolean(FRAMEWORK_FIX, true) }
         location.latitude = if (newlat == 0.0 && newlng == 0.0) 0.000001 else newlat
         location.longitude = if (newlat == 0.0 && newlng == 0.0) 0.000001 else newlng
         // Realistic GPS accuracy for navigation apps (3.0 - 15.0 m)
@@ -210,20 +215,10 @@ object LocationHook {
                 location.bearingAccuracyDegrees = origin.bearingAccuracyDegrees
             }
         }
-        // GNSS satellite extras for genuine fix verification
-        val extras = Bundle().apply {
-            putInt("satellites", 14)
-            putFloat("meanCn0", 35.0f)
-            putFloat("maxCn0", 42.0f)
-        }
-        location.extras = extras
-
         try {
-            HiddenApiBypass.invoke(location.javaClass, location, "setMock", false)
-        } catch (_: Throwable) {
-            try {
-                HiddenApiBypass.invoke(location.javaClass, location, "setIsFromMockProvider", false)
-            } catch (_: Throwable) {}
+            HiddenApiBypass.invoke(location.javaClass, location, "setIsFromMockProvider", false)
+        } catch (e: Exception) {
+            module.log(Log.WARN, TAG, "unable to set mock $e")
         }
         return location
     }
@@ -298,7 +293,7 @@ object LocationHook {
         } catch (_: Throwable) {}
     }
 
-    // Actively feeds spoofed fixes to providers at 1 Hz so Google Play services and listeners have fresh GPS fixes
+    // Keep each provider updating even when its underlying source has stopped reporting.
     private fun startFixGenerator(classLoader: ClassLoader, lmsClass: Class<*>, lpmClass: Class<*>, emergencyField: Field?) {
         if (generatorStarted) return
         generatorStarted = true
@@ -315,10 +310,7 @@ object LocationHook {
                     Thread.sleep(250)
                     if (!isActive(200)) continue
 
-                    val now = SystemClock.elapsedRealtime()
-                    // Deliver at 2 Hz (~450ms) when in motion for smooth navigation, 1 Hz (~900ms) when static
-                    val cadence = if (newSpeed > 0f) 450 else 900
-                    if (now - lastGpsReportTime < cadence) continue
+                    val cadence = if (newBearing >= 0f) 500 else 1_000
 
                     // Never generate fake fixes during an active emergency call/SMS
                     val inEmerg = providerManagers.values.any { inEmergency(emergencyField?.get(it)) }
@@ -334,24 +326,24 @@ object LocationHook {
                         LocationManager.NETWORK_PROVIDER
                     )
 
-                    var deliveredGps = false
                     for (name in targets) {
                         val manager = providerManagers[name] ?: continue
                         try {
-                            val fakeLoc = fakeLocation(provider = name)
-                            val res = wrapLocationResult(resultClass, fakeLoc) ?: continue
-                            val lock = (field(manager.javaClass, "mMultiplexerLock") ?: field(manager.javaClass, "mLock"))?.get(manager) ?: manager
+                            val lock = providerLock(manager) ?: continue
                             synchronized(lock) {
-                                onReportLocation.invoke(manager, res)
+                                val now = SystemClock.elapsedRealtime()
+                                val lastReport = lastProviderReportTimes[name] ?: 0L
+                                if (now - lastReport >= cadence && isActive(200) && !inEmergency(emergencyField?.get(manager))) {
+                                    val fix = fakeLocation(provider = name, fresh = true)
+                                    wrapLocationResult(resultClass, fix)?.let {
+                                        onReportLocation.invoke(manager, it)
+                                        lastProviderReportTimes[name] = SystemClock.elapsedRealtime()
+                                    }
+                                }
                             }
-                            if (name == LocationManager.GPS_PROVIDER) deliveredGps = true
                         } catch (t: Throwable) {
                             module.log(Log.WARN, TAG, "Failed to deliver fake fix to $name", t)
                         }
-                    }
-
-                    if (deliveredGps) {
-                        lastGpsReportTime = now
                     }
                 } catch (e: InterruptedException) {
                     break
@@ -368,6 +360,9 @@ object LocationHook {
     // for methods taking a single Location: hand the original our fake instead
     private fun proceedWithFake(chain: Chain): Any? =
         chain.proceed(arrayOf<Any?>(fakeLocation(chain.getArg(0) as Location?)))
+
+    private fun isFrameworkFix(location: Any?): Boolean =
+        (location as? Location)?.extras?.getBoolean(FRAMEWORK_FIX) == true
 
     // one missing method (ROM / version differences) shouldn't take the other hooks down with it
     private inline fun safely(what: String, block: () -> Unit) {
@@ -440,8 +435,7 @@ object LocationHook {
             if (Build.VERSION.SDK_INT >= 31) {
                 val lpm = classLoader.loadClass("com.android.server.location.provider.LocationProviderManager")
                 val result = Class.forName("android.location.LocationResult") // @SystemApi, not in the public SDK
-                val size = result.getMethod("size")
-                val get = result.getMethod("get", Int::class.java)
+                val getLast = result.getMethod("getLastLocation")
                 val getName = lpm.getMethod("getName")
                 // Android 14+ only; on 12/13 there is no emergency state here to check
                 val emergency = try { lpm.getDeclaredField("mEmergencyHelper").apply { isAccessible = true } } catch (e: NoSuchFieldException) { null }
@@ -452,17 +446,18 @@ object LocationHook {
                         val manager = chain.thisObject
                         registerProviderManager(manager, lpm)
                         val name = try { getName.invoke(manager) as? String } catch (_: Throwable) { null }
-                        if (name == LocationManager.GPS_PROVIDER) {
-                            lastGpsReportTime = SystemClock.elapsedRealtime()
+                        if (name == null || name == LocationManager.PASSIVE_PROVIDER ||
+                            !isActive(interval) || inEmergency(emergency?.get(manager))) return@intercept chain.proceed()
+
+                        // A report represents the current simulated position. An old batch's timestamps
+                        // can put that position behind a fix already sent by the generator.
+                        val original = getLast.invoke(chain.getArg(0)) as? Location ?: return@intercept chain.proceed()
+                        if (isFrameworkFix(original)) return@intercept chain.proceed()
+                        val fix = fakeLocation(original, fresh = true)
+                        val wrapped = wrapLocationResult(result, fix) ?: return@intercept chain.proceed()
+                        chain.proceed(arrayOf<Any?>(wrapped)).also {
+                            lastProviderReportTimes[name] = fix.elapsedRealtimeNanos / 1_000_000
                         }
-                        if (isActive(interval) && !inEmergency(emergency?.get(manager))) {
-                            val locations = chain.getArg(0)
-                            for (i in 0 until size.invoke(locations) as Int) {
-                                val location = get.invoke(locations, i) as Location
-                                location.set(fakeLocation(location))
-                            }
-                        }
-                        chain.proceed()
                     }
                 }
 
@@ -522,6 +517,14 @@ object LocationHook {
         appPackage = packageName
         val interval = 80 // 200
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) safely("single-app location updates") {
+            SingleAppLocationUpdates(
+                module,
+                isActive = { settings.singleTarget == packageName && isActive(interval) },
+                createFix = { provider -> fakeLocation(provider = provider, fresh = true) },
+            ).install()
+        }
+
         for (method in Location::class.java.declaredMethods) {
             val spoofed: (() -> Any)? = when (method.name) {
                 "getLatitude" -> { -> newlat }
@@ -533,57 +536,26 @@ object LocationHook {
                 "hasAltitude" -> { -> true }
                 "hasSpeed" -> { -> newSpeed > 0f }
                 "hasBearing" -> { -> newBearing >= 0f }
-                "getSpeedAccuracyMetersPerSecond" -> { -> 0.5f }
+                "getSpeedAccuracyMetersPerSecond" -> { -> 1.0f }
                 "getBearingAccuracyDegrees" -> { -> 1.0f }
-                "getVerticalAccuracyMeters" -> { -> 1.5f }
-                "hasSpeedAccuracy" -> { -> newSpeed > 0f }
-                "hasBearingAccuracy" -> { -> newBearing >= 0f }
-                "hasVerticalAccuracy" -> { -> true }
-                "getTime" -> { -> System.currentTimeMillis() }
-                "getElapsedRealtimeNanos" -> { -> SystemClock.elapsedRealtimeNanos() }
-                "getElapsedRealtimeMillis" -> { -> SystemClock.elapsedRealtime() }
-                "getElapsedRealtimeAgeMillis" -> { -> 0.0 }
+                "getVerticalAccuracyMeters" -> { -> 2.0f }
                 "isFromMockProvider" -> { -> false }
                 "isMock" -> { -> false }
-                "getExtras" -> { ->
-                    Bundle().apply {
-                        putInt("satellites", 14)
-                        putFloat("meanCn0", 35.0f)
-                        putFloat("maxCn0", 42.0f)
-                    }
-                }
                 else -> null
             }
             if (spoofed != null) safely(method.name) {
-                module.hook(method).intercept { chain -> if (isActive(interval)) spoofed() else chain.proceed() }
-            }
-        }
-
-        // Sensor Spoofing: Prevent Google Maps Dead-Reckoning / Activity Recognition from clamping to STILL
-        safely("SensorManager.registerListener") {
-            val smClass = SensorManager::class.java
-            for (m in smClass.declaredMethods) {
-                if (m.name == "registerListener" && m.parameterTypes.isNotEmpty() &&
-                    SensorEventListener::class.java.isAssignableFrom(m.parameterTypes[0])) {
-                    val paramCount = m.parameterTypes.size
-                    module.hook(m).intercept { chain ->
-                        val original = chain.getArg(0) as? SensorEventListener
-                        if (original != null && original !is SpoofedSensorListener) {
-                            val newArgs = Array<Any?>(paramCount) { i ->
-                                if (i == 0) SpoofedSensorListener(original) else chain.getArg(i)
-                            }
-                            chain.proceed(newArgs)
-                        } else {
-                            chain.proceed()
-                        }
-                    }
+                module.hook(method).intercept { chain ->
+                    // Keep framework samples stable when a scoped app reads the same fix again.
+                    if (!isFrameworkFix(chain.thisObject) && isActive(interval)) spoofed() else chain.proceed()
                 }
             }
         }
 
         safely("Location.set") {
             module.hook(Location::class.java.getDeclaredMethod("set", Location::class.java))
-                .intercept { chain -> if (isActive(interval)) proceedWithFake(chain) else chain.proceed() }
+                .intercept { chain ->
+                    if (!isFrameworkFix(chain.getArg(0)) && isActive(interval)) proceedWithFake(chain) else chain.proceed()
+                }
         }
 
         safely("getLastKnownLocation") {
@@ -640,39 +612,6 @@ object LocationHook {
                     }
                 }
             }
-        }
-    }
-}
-
-private class SpoofedSensorListener(private val delegate: SensorEventListener) : SensorEventListener2 {
-    private val rand = Random()
-    override fun onSensorChanged(event: SensorEvent?) {
-        if (event != null && LocationHook.newlat != 0.0) {
-            when (event.sensor.type) {
-                Sensor.TYPE_ACCELEROMETER -> {
-                    // Inject realistic vehicle/movement vibration noise (~0.12 m/s²)
-                    event.values[0] += (rand.nextGaussian() * 0.08).toFloat()
-                    event.values[1] += (rand.nextGaussian() * 0.08).toFloat()
-                    event.values[2] += (rand.nextGaussian() * 0.12).toFloat()
-                }
-                Sensor.TYPE_GYROSCOPE -> {
-                    // Subtle rotational road oscillations (~0.015 rad/s)
-                    event.values[0] += (rand.nextGaussian() * 0.015).toFloat()
-                    event.values[1] += (rand.nextGaussian() * 0.015).toFloat()
-                    event.values[2] += (rand.nextGaussian() * 0.015).toFloat()
-                }
-            }
-        }
-        delegate.onSensorChanged(event)
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-        delegate.onAccuracyChanged(sensor, accuracy)
-    }
-
-    override fun onFlushCompleted(sensor: Sensor?) {
-        if (delegate is SensorEventListener2) {
-            delegate.onFlushCompleted(sensor)
         }
     }
 }

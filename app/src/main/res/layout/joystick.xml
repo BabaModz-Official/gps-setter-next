@@ -27,6 +27,20 @@
             android:textSize="11sp"
             android:textStyle="bold" />
 
+        <TextView
+            android:id="@+id/tv_joystick_speed"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
+            android:background="?android:attr/selectableItemBackground"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:paddingHorizontal="4dp"
+            android:paddingVertical="1dp"
+            android:textColor="#3D82F6"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
         <ImageView
             android:id="@+id/btn_close_joystick"
             android:layout_width="20dp"
@@ -37,15 +51,12 @@
     </LinearLayout>
 
     <!-- Virtual Joystick -->
-    <io.github.controlwear.virtual.joystick.android.JoystickView
+    <io.github.jqssun.gpssetter.ui.ThumbstickView
         android:id="@+id/joystickView_right"
         android:layout_width="120dp"
         android:layout_height="120dp"
         android:layout_gravity="center_horizontal"
-        custom:JV_backgroundColor="#66555555"
-        custom:JV_borderColor="#88FFFFFF"
-        custom:JV_borderWidth="4dp"
-        custom:JV_buttonColor="#FF3D82F6" />
+        android:contentDescription="@string/joystick_direction" />
 
     <!-- Speed Mode Selectors -->
     <LinearLayout
