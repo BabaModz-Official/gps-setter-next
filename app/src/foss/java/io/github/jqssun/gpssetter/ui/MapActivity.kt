@@ -12,6 +12,7 @@ import io.github.jqssun.gpssetter.utils.ext.getAddress
 import io.github.jqssun.gpssetter.utils.ext.showToast
 import kotlinx.coroutines.launch
 import io.github.jqssun.gpssetter.utils.Accent
+import io.github.jqssun.gpssetter.utils.CooldownHelper
 import io.github.jqssun.gpssetter.utils.PrefManager
 import org.maplibre.android.MapLibre
 import org.maplibre.android.annotations.IconFactory
@@ -255,6 +256,7 @@ class MapActivity: BaseMapActivity(), OnMapReadyCallback, MapLibreMap.OnMapClick
         // which of the two shows (and the "Move here" label) is BaseMapActivity.renderTeleport's job
         binding.startButton.setOnClickListener {
             if (!locationOnOrAsk()) return@setOnClickListener
+            CooldownHelper.onTeleport(lat, lon)
             viewModel.update(true, lat, lon)
             lifecycleScope.launch {
                 LatLng(lat, lon).getAddress(getActivityInstance()).collect { showStartNotification(it) }

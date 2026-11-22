@@ -120,14 +120,33 @@
             android:textSize="12.5sp"
             tools:text="@string/scope_hint_system" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/scope_mode"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="wrap_content"
+        <LinearLayout
+            xmlns:app="http://schemas.android.com/apk/res-auto"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginBottom="8dp"
-            android:text="@string/scope_mode" />
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:layout_marginBottom="8dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/scope_mode"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/scope_mode" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/scope_launch_target"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:visibility="gone"
+                app:icon="@drawable/ic_joystick"
+                tools:text="Launch Maps &amp; Joystick"
+                tools:visibility="visible" />
+        </LinearLayout>
 
         <!-- one row per scoped app (scope_item), added in code; the scope is a handful of apps -->
         <LinearLayout

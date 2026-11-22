@@ -21,6 +21,7 @@ import com.google.android.gms.maps.model.Polyline
 import com.google.android.gms.maps.model.PolylineOptions
 import io.github.jqssun.gpssetter.R
 import io.github.jqssun.gpssetter.utils.Accent
+import io.github.jqssun.gpssetter.utils.CooldownHelper
 import io.github.jqssun.gpssetter.utils.PrefManager
 import io.github.jqssun.gpssetter.utils.ext.getAddress
 import io.github.jqssun.gpssetter.utils.ext.showToast
@@ -187,6 +188,7 @@ class MapActivity: BaseMapActivity(), OnMapReadyCallback, GoogleMap.OnMapClickLi
         // which of the two shows (and the "Move here" label) is BaseMapActivity.renderTeleport's job
         binding.startButton.setOnClickListener {
             if (!locationOnOrAsk()) return@setOnClickListener
+            CooldownHelper.onTeleport(lat, lon)
             viewModel.update(true, lat, lon)
             lifecycleScope.launch {
                 LatLng(lat, lon).getAddress(getActivityInstance()).collect { showStartNotification(it) }

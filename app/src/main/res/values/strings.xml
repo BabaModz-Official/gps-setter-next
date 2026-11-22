@@ -62,6 +62,13 @@
     <string name="start_mock">Teleport here</string>
     <string name="location_off_title">Location is off</string>
     <string name="location_off_message">Teleport and routes need Location on. While it\'s off, Android gives no app a location, real or fake.</string>
+    <string name="toggle_floating_joystick">Toggle floating joystick</string>
+    <string name="cooldown_safe">Safe</string>
+    <string name="cooldown_format">⏳ Cooldown: %1$s (%2$.1f km)</string>
+    <string name="cooldown_safe_format">✅ Cooldown: Safe</string>
+    <string name="overlay_permission_required">Please grant "Display over other apps" permission to use the floating joystick</string>
+    <string name="launch_target_with_joystick">Launch %s &amp; Floating Joystick</string>
+    <string name="joystick_opacity">Opacity: %s</string>
     <string name="turn_on_location">Turn on</string>
     <string name="move_here">Move here</string>
     <string name="spoof_live">Live · accuracy %s m</string>

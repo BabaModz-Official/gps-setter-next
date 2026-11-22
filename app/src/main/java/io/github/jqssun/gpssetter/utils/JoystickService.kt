@@ -1,9 +1,13 @@
 package io.github.jqssun.gpssetter.utils
 
 import android.annotation.SuppressLint
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
@@ -12,6 +16,7 @@ import android.os.SystemClock
 import android.view.*
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.core.app.NotificationCompat
 import io.github.jqssun.gpssetter.R
 import io.github.jqssun.gpssetter.route.RoutePlaybackService
 import io.github.jqssun.gpssetter.ui.ThumbstickView
@@ -29,12 +34,66 @@ class JoystickService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var tickerJob: Job? = null
+    private var cooldownTickerJob: Job? = null
     private var bearing = 0f
     private var strength = 0f
+    private var walkStep = 0L
+
+    companion object {
+        const val ACTION_STOP = "io.github.jqssun.gpssetter.joystick.STOP"
+        private const val NOTIF_ID = 789
+        private const val CHANNEL_ID = "floating_joystick_channel"
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            PrefManager.isJoystickEnabled = false
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        return START_STICKY
+    }
+
+    private fun startInForeground() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Floating Joystick",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Shows floating joystick overlay over apps"
+            }
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(channel)
+        }
+
+        val stopIntent = Intent(this, JoystickService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPending = PendingIntent.getService(
+            this, 102, stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+
+        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_joystick)
+            .setContentTitle("GPS Setter Next")
+            .setContentText("Floating Joystick active")
+            .setOngoing(true)
+            .addAction(R.drawable.ic_close, "Stop", stopPending)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+        } else {
+            startForeground(NOTIF_ID, notif)
+        }
+    }
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate() {
         super.onCreate()
+        startInForeground()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val inflater = getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
         mJoystickContainerView = inflater.inflate(R.layout.joystick, null)
@@ -42,6 +101,59 @@ class JoystickService : Service() {
         val thumbstick = mJoystickContainerView?.findViewById<ThumbstickView>(R.id.joystickView_right)
         val header = mJoystickContainerView?.findViewById<View>(R.id.joystick_header)
         val btnClose = mJoystickContainerView?.findViewById<ImageView>(R.id.btn_close_joystick)
+        val btnMinimize = mJoystickContainerView?.findViewById<ImageView>(R.id.btn_minimize_joystick)
+        val btnOpacity = mJoystickContainerView?.findViewById<TextView>(R.id.btn_joystick_opacity)
+        val joystickBody = mJoystickContainerView?.findViewById<View>(R.id.joystick_body)
+        val tvCooldown = mJoystickContainerView?.findViewById<TextView>(R.id.tv_joystick_cooldown)
+
+        // Opacity setup
+        val opacities = floatArrayOf(1.0f, 0.75f, 0.45f)
+        val opacityLabels = arrayOf("100%", "75%", "45%")
+        var opacityIndex = opacities.indexOfFirst { kotlin.math.abs(it - PrefManager.joystickAlpha) < 0.05f }
+        if (opacityIndex < 0) opacityIndex = 0
+
+        fun applyOpacity(idx: Int) {
+            val alpha = opacities[idx]
+            PrefManager.joystickAlpha = alpha
+            mJoystickContainerView?.alpha = alpha
+            btnOpacity?.text = opacityLabels[idx]
+        }
+        applyOpacity(opacityIndex)
+
+        btnOpacity?.setOnClickListener {
+            opacityIndex = (opacityIndex + 1) % opacities.size
+            applyOpacity(opacityIndex)
+        }
+
+        // Collapse / Expand setup
+        fun applyCollapsed(collapsed: Boolean) {
+            PrefManager.isJoystickCollapsed = collapsed
+            joystickBody?.visibility = if (collapsed) View.GONE else View.VISIBLE
+            btnMinimize?.rotation = if (collapsed) 180f else 0f
+        }
+        applyCollapsed(PrefManager.isJoystickCollapsed)
+
+        btnMinimize?.setOnClickListener {
+            val nowCollapsed = joystickBody?.visibility == View.VISIBLE
+            applyCollapsed(nowCollapsed)
+        }
+
+        // Cooldown live badge
+        val safeColor = Color.parseColor("#22C55E")
+        val cdColor = Color.parseColor("#F59E0B")
+        cooldownTickerJob = serviceScope.launch {
+            while (isActive) {
+                val remaining = CooldownHelper.getRemainingCooldownMillis()
+                if (remaining <= 0L) {
+                    tvCooldown?.text = "Safe"
+                    tvCooldown?.setTextColor(safeColor)
+                } else {
+                    tvCooldown?.text = "⏳ " + CooldownHelper.formatRemaining(remaining)
+                    tvCooldown?.setTextColor(cdColor)
+                }
+                delay(1000)
+            }
+        }
 
         val speeds = intArrayOf(1, 5, 10, 15, 20, 30, 50)
         var speedIndex = PrefManager.stickSpeedIndex.coerceIn(0, speeds.lastIndex)
@@ -158,7 +270,16 @@ class JoystickService : Service() {
                 val now = SystemClock.elapsedRealtime()
                 val elapsedSeconds = (now - lastTick).coerceIn(0L, 250L) / 1000.0
                 lastTick = now
-                val speed = speedMps * strength
+
+                walkStep++
+                val naturalMultiplier = if (PrefManager.isNaturalMovementEnabled) {
+                    // Realistic human stride fluctuation (±6%)
+                    1.0 + 0.06 * kotlin.math.sin(walkStep * 0.4)
+                } else {
+                    1.0
+                }
+                val speed = (speedMps * strength * naturalMultiplier).toFloat()
+
                 val point = GeoOffset.destination(PrefManager.getLat, PrefManager.getLng, bearing, speed * elapsedSeconds)
                 lastPoint = point
                 PrefManager.updateMotion(point.first, point.second, PrefManager.altitude, speed, bearing, 0f)
@@ -169,6 +290,7 @@ class JoystickService : Service() {
     private fun stopTicker() {
         tickerJob?.cancel()
         tickerJob = null
+        walkStep = 0L
         strength = 0f
         val point = lastPoint
         lastPoint = null
@@ -183,6 +305,8 @@ class JoystickService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         stopTicker()
+        cooldownTickerJob?.cancel()
+        cooldownTickerJob = null
         serviceScope.cancel()
         mJoystickContainerView?.let {
             wm?.removeView(it)

@@ -13,6 +13,7 @@ import android.graphics.Color
 import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -73,6 +74,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import io.github.jqssun.gpssetter.databinding.ActivityMapBinding
 import io.github.jqssun.gpssetter.ui.viewmodel.MainViewModel
+import io.github.jqssun.gpssetter.utils.CooldownHelper
 import io.github.jqssun.gpssetter.utils.JoystickService
 import io.github.jqssun.gpssetter.utils.NotificationsChannel
 import io.github.jqssun.gpssetter.utils.EXTRA_ASK_LOCATION
@@ -330,6 +332,10 @@ abstract class BaseMapActivity: AppCompatActivity() {
             if (fromUser) PrefManager.jitterMeters = v
         }
 
+        b.btnFloatingJoystick.setOnClickListener {
+            toggleFloatingJoystick()
+        }
+
         b.copyCoords.setOnClickListener {
             getSystemService(ClipboardManager::class.java)
                 .setPrimaryClip(ClipData.newPlainText(getString(R.string.copy_coords), coordText()))
@@ -377,9 +383,47 @@ abstract class BaseMapActivity: AppCompatActivity() {
         }
     }
 
+    private var cooldownTickerJob: Job? = null
+
+    private fun startCooldownTicker() {
+        cooldownTickerJob?.cancel()
+        cooldownTickerJob = lifecycleScope.launch {
+            while (isActive) {
+                if (binding.teleportPanel.isVisible) {
+                    renderCooldown()
+                }
+                delay(1000)
+            }
+        }
+    }
+
     override fun onPause() {
+        cooldownTickerJob?.cancel()
+        cooldownTickerJob = null
         binding.teleportStick.release()
         super.onPause()
+    }
+
+    private fun toggleFloatingJoystick() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            showToast(getString(R.string.overlay_permission_required))
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            return
+        }
+        val intent = Intent(this, JoystickService::class.java)
+        if (PrefManager.isJoystickEnabled) {
+            stopService(intent)
+            PrefManager.isJoystickEnabled = false
+            showToast("Floating Joystick disabled")
+        } else {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            PrefManager.isJoystickEnabled = true
+            showToast("Floating Joystick enabled")
+        }
     }
 
     // Idle: "Teleport here". Live at the selected point: Stop. Live elsewhere: "Move here" + Stop.
@@ -395,6 +439,32 @@ abstract class BaseMapActivity: AppCompatActivity() {
         b.startButton.isVisible = !here
         b.startButton.setText(if (live) R.string.move_here else R.string.start_mock)
         b.stopButton.isVisible = live
+        renderCooldown()
+    }
+
+    private fun renderCooldown() {
+        val b = binding
+        val remainingMillis = CooldownHelper.getRemainingCooldownMillis()
+        if (remainingMillis > 0L) {
+            val distKm = PrefManager.lastTeleportDistance / 1000.0
+            b.cooldownStatus.text = getString(R.string.cooldown_format, CooldownHelper.formatRemaining(remainingMillis), distKm)
+            b.cooldownStatus.setTextColor(Color.parseColor("#F59E0B"))
+        } else {
+            val lastLat = PrefManager.lastTeleportLat
+            val lastLon = PrefManager.lastTeleportLng
+            if (lastLat != 0.0 || lastLon != 0.0) {
+                val dist = CooldownHelper.distanceMeters(lastLat, lastLon, lat, lon)
+                val estSecs = CooldownHelper.calculateCooldownSeconds(dist)
+                if (estSecs > 0) {
+                    b.cooldownStatus.text = String.format(Locale.US, "✅ Safe | Hop (%.1f km): ~%dm cooldown", dist / 1000.0, estSecs / 60)
+                } else {
+                    b.cooldownStatus.text = getString(R.string.cooldown_safe_format)
+                }
+            } else {
+                b.cooldownStatus.text = getString(R.string.cooldown_safe_format)
+            }
+            b.cooldownStatus.setTextColor(getColor(R.color.status_ok))
+        }
     }
 
     private val routeListAdapter = RouteListAdapter()
@@ -588,6 +658,39 @@ abstract class BaseMapActivity: AppCompatActivity() {
         }
         t.scopeAdd.isEnabled = PrefManager.service != null
         t.scopeMode.isEnabled = PrefManager.service != null || target != null
+
+        // 1-Click Launch Target App & Floating Joystick
+        if (target != null) {
+            val appLabel = scopeLabel(target)
+            t.scopeLaunchTarget.isVisible = true
+            t.scopeLaunchTarget.text = getString(R.string.launch_target_with_joystick, appLabel)
+            t.scopeLaunchTarget.setOnClickListener {
+                if (!PrefManager.isStarted) {
+                    CooldownHelper.onTeleport(lat, lon)
+                    viewModel.update(true, lat, lon)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+                    showToast(getString(R.string.overlay_permission_required))
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                    return@setOnClickListener
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(Intent(this, JoystickService::class.java))
+                } else {
+                    startService(Intent(this, JoystickService::class.java))
+                }
+                PrefManager.isJoystickEnabled = true
+                val launchIntent = packageManager.getLaunchIntentForPackage(target)
+                if (launchIntent != null) {
+                    startActivity(launchIntent)
+                } else {
+                    showToast("Could not launch $appLabel")
+                }
+            }
+        } else {
+            t.scopeLaunchTarget.isVisible = false
+        }
+
         t.scopeList.removeAllViews()
         val disabled = PrefManager.disabledApps
         for (pkg in scope) {
@@ -1115,6 +1218,7 @@ abstract class BaseMapActivity: AppCompatActivity() {
         viewModel.updateXposedState()
         applyMapType() // picks up a change made in Settings
         showStickSpeed()
+        startCooldownTicker()
     }
 
     protected fun addFavoriteDialog() {

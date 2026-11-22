@@ -255,6 +255,47 @@ object PrefManager   {
         get() = pref.getInt(STICK_SPEED_INDEX, 1)
         set(value) = pref.edit().putInt(STICK_SPEED_INDEX, value).apply()
 
+    private const val LAST_TELEPORT_LAT = "last_teleport_lat"
+    private const val LAST_TELEPORT_LNG = "last_teleport_lng"
+    private const val LAST_TELEPORT_TIME = "last_teleport_time"
+    private const val LAST_TELEPORT_DIST = "last_teleport_dist"
+    private const val COOLDOWN_EXPIRY = "cooldown_expiry"
+    private const val JOYSTICK_ALPHA = "joystick_alpha"
+    private const val JOYSTICK_COLLAPSED = "joystick_collapsed"
+    private const val NATURAL_MOVEMENT = "natural_movement"
+
+    var lastTeleportLat: Double
+        get() = Double.fromBits(pref.getLong(LAST_TELEPORT_LAT, 0L))
+        set(value) = pref.edit().putLong(LAST_TELEPORT_LAT, value.toRawBits()).apply()
+
+    var lastTeleportLng: Double
+        get() = Double.fromBits(pref.getLong(LAST_TELEPORT_LNG, 0L))
+        set(value) = pref.edit().putLong(LAST_TELEPORT_LNG, value.toRawBits()).apply()
+
+    var lastTeleportTime: Long
+        get() = pref.getLong(LAST_TELEPORT_TIME, 0L)
+        set(value) = pref.edit().putLong(LAST_TELEPORT_TIME, value).apply()
+
+    var lastTeleportDistance: Double
+        get() = Double.fromBits(pref.getLong(LAST_TELEPORT_DIST, 0L))
+        set(value) = pref.edit().putLong(LAST_TELEPORT_DIST, value.toRawBits()).apply()
+
+    var cooldownExpiryTime: Long
+        get() = pref.getLong(COOLDOWN_EXPIRY, 0L)
+        set(value) = pref.edit().putLong(COOLDOWN_EXPIRY, value).apply()
+
+    var joystickAlpha: Float
+        get() = pref.getFloat(JOYSTICK_ALPHA, 1.0f)
+        set(value) = pref.edit().putFloat(JOYSTICK_ALPHA, value).apply()
+
+    var isJoystickCollapsed: Boolean
+        get() = pref.getBoolean(JOYSTICK_COLLAPSED, false)
+        set(value) = pref.edit().putBoolean(JOYSTICK_COLLAPSED, value).apply()
+
+    var isNaturalMovementEnabled: Boolean
+        get() = pref.getBoolean(NATURAL_MOVEMENT, true)
+        set(value) = pref.edit().putBoolean(NATURAL_MOVEMENT, value).apply()
+
     // apply() updates memory at once and writes to disk (and the remote mirror) in the background,
     // so callers read the new state straight after; the Teleport panel relies on that
     fun update(start:Boolean, la: Double, ln: Double) {

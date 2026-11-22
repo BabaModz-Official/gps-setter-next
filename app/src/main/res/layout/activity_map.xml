@@ -78,6 +78,24 @@
             app:iconSize="26dp" />
 
         <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_floating_joystick"
+            style="@style/GlassFab"
+            android:contentDescription="@string/toggle_floating_joystick"
+            android:layout_above="@id/addfavorite"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_alignParentEnd="true"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="12dp"
+            android:elevation="10dp"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            app:icon="@drawable/ic_joystick"
+            app:iconGravity="textStart"
+            app:iconPadding="0dp"
+            app:iconSize="26dp" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/addfavorite"
             style="@style/GlassFab"
             android:contentDescription="@string/addfavorite_desc"
@@ -157,6 +175,17 @@
             </LinearLayout>
 
             <TextView android:id="@+id/coords" android:layout_width="match_parent" android:layout_height="wrap_content" android:fontFamily="monospace" android:textColor="@color/glass_ink" android:textSize="20sp" android:textStyle="bold" tools:text="17.361610, 78.474660" />
+
+            <TextView
+                android:id="@+id/cooldown_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:fontFamily="monospace"
+                android:textColor="@color/status_ok"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                tools:text="✅ Cooldown: Safe" />
 
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:gravity="center_vertical" android:orientation="horizontal">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/jitter" android:textColor="@color/glass_ink_dim" android:textSize="13sp" />
